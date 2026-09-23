@@ -12,6 +12,9 @@ import dev.ichinomiya.ninebotenhance.ipc.Protocol;
 /** Re-establishes and verifies the manager-authorized connection before any VirtualDisplay exists. */
 public final class RootAuthorization {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    /** Shell uid with the input group (AID_INPUT 1004) so the daemon may read an external touch panel; the plain form is the fallback. */
+    private static final String[] SHELL_WITH_INPUT = {"su", "2000", "-g", "2000", "-G", "1004", "-c", "exec /system/bin/sh"},
+            SHELL_PLAIN = {"su", "2000", "-c", "exec /system/bin/sh"};
     private static Attempt current;
     private static final class Attempt {
         Process process;
@@ -44,12 +47,20 @@ public final class RootAuthorization {
         Diagnostics.add(automatic ? "PRIVILEGE checking Root before cast" : "PRIVILEGE Root request from settings");
         new Thread(() -> {
             try {
-                Process process = new ProcessBuilder("su", "2000", "-c", "exec /system/bin/sh").redirectErrorStream(true).start();
-                synchronized (RootAuthorization.class) {
-                    if (current != attempt || attempt.error != null) { process.destroy(); return; }
-                    attempt.process = process;
+                AuthorizedShell shell = null;
+                for (boolean inputGroup : new boolean[]{true, false}) {
+                    // The input group lets the daemon read an external touch panel; a su that rejects the option is retried without it.
+                    Process process = new ProcessBuilder(inputGroup ? SHELL_WITH_INPUT : SHELL_PLAIN).redirectErrorStream(true).start();
+                    synchronized (RootAuthorization.class) {
+                        if (current != attempt || attempt.error != null) { process.destroy(); return; }
+                        attempt.process = process;
+                    }
+                    shell = new AuthorizedShell(process);
+                    long deadline = android.os.SystemClock.elapsedRealtime() + 1200;
+                    while (!shell.ready() && shell.pending() && android.os.SystemClock.elapsedRealtime() < deadline) Thread.sleep(50);
+                    if (shell.ready() || shell.pending() || !inputGroup) break;
+                    Diagnostics.add("PRIVILEGE su rejected the input group option, retrying without it");
                 }
-                AuthorizedShell shell = new AuthorizedShell(process);
                 synchronized (RootAuthorization.class) {
                     if (current != attempt || attempt.error != null) { shell.close(); return; }
                     attempt.shell = shell;

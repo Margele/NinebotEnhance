@@ -5,6 +5,8 @@ import dev.ichinomiya.ninebotenhance.core.CallerPolicy;
 import dev.ichinomiya.ninebotenhance.core.DisplaySettings;
 import dev.ichinomiya.ninebotenhance.core.KeyboardPolicy;
 import dev.ichinomiya.ninebotenhance.core.SessionLease;
+import dev.ichinomiya.ninebotenhance.core.TouchCalibration;
+import dev.ichinomiya.ninebotenhance.core.TouchPanel;
 import dev.ichinomiya.ninebotenhance.diagnostics.Diagnostics;
 import dev.ichinomiya.ninebotenhance.diagnostics.LogDigest;
 import dev.ichinomiya.ninebotenhance.display.RootDisplayMain;
@@ -83,6 +85,11 @@ public final class RootSession {
         try { return DisplaySettings.read(p::getInt); }
         catch (IllegalArgumentException e) { return DisplaySettings.defaults(); }
     }
+    /** The external touch panel bound on the module's own touch screen page; the daemon reads and grabs it for the session. */
+    public TouchPanel touchPanel() {
+        android.content.SharedPreferences p = context.getSharedPreferences(dev.ichinomiya.ninebotenhance.ui.TouchSettingsActivity.PREFERENCES, 0);
+        return TouchPanel.read(p::getInt, p::getString);
+    }
     public synchronized Bundle settingsBundle() {
         Bundle data = new Bundle(); Ipc.settings(data, settings());
         data.putString(AppCatalog.SELECTED, context.getSharedPreferences("virtual_display", 0).getString(AppCatalog.SELECTED, ""));
@@ -131,6 +138,8 @@ public final class RootSession {
             catch (RemoteException e) { stop(request, "九号已退出"); throw e; }
         }
         Diagnostics.add("VD begin " + current.label() + "; raw Surface, no MediaProjection/JPEG");
+        TouchPanel panel = touchPanel();
+        if (panel.bound()) { Diagnostics.add("TOUCH panel " + panel.label() + " rotation=" + panel.rotation() * 90); TouchPanelUsb.acquire(context, panel, Diagnostics::add); }
         new Thread(() -> launchRoot(request, secret, authorized), "Mirror-RootBootstrap").start();
         main.postDelayed(() -> { synchronized (RootSession.this) { if (!lease.owns(request) || lease.isReady()) return; }
             stop(request, "创建超时，请检查设置中的授权方式与服务状态，并查看日志"); }, 60000);
@@ -171,6 +180,7 @@ public final class RootSession {
             result.putParcelable(AppCatalog.SELECTED, launchApp);
             Ipc.settings(result, current); state = "正在创建虚拟显示器";
             result.putInt(Protocol.CAPTURE_WIDTH, renderWidth); result.putInt(Protocol.CAPTURE_HEIGHT, renderHeight); result.putInt("render_dpi", renderDpi);
+            touchPanel().write(result::putInt, result::putString);
         } else {
             if (!lease.authorize(secret)) throw new SecurityException("过期的辅助进程");
             if ("ready".equals(method)) {
@@ -207,6 +217,7 @@ public final class RootSession {
         result.putInt("displayId", displayId); result.putString("state", state);
         result.putString("backend", backend);
         result.putString(Protocol.APP_LAYOUT_POLICY, appLayoutPolicy); result.putBoolean("render_fallback", renderFallback);
+        result.putBoolean("touch_bound", touchPanel().bound());
         result.putString(AppCatalog.SELECTED, launchApp == null ? "" : launchApp.flattenToString());
         boolean recent = appRecoveryAt != 0 && SystemClock.elapsedRealtime() - appRecoveryAt < 5000 && lease.isReady();
         result.putInt(Protocol.APP_RECOVERY, recent ? appRecovery : AppRecoveryState.HIDDEN);
@@ -233,6 +244,7 @@ public final class RootSession {
             root = owner = null; surface = null; displayId = -1; state = reason;
         }
         Diagnostics.add("VD stopped: " + reason);
+        TouchPanelUsb.release();
         if (output != null) output.release();
         // Per-display lease Binder dies logically as soon as the broker revokes it (daemon polls STATUS below).
         commands.post(() -> { if (endpoint != null) try { Ipc.call(endpoint, Protocol.ROOT_STOP, Ipc.request(request)); } catch (Exception ignored) {} });
@@ -242,6 +254,19 @@ public final class RootSession {
             throw new SecurityException("仅允许当前投屏的九号进程控制虚拟屏");
     }
     public void key(String request, int code) { Bundle args = Ipc.request(request); args.putInt("key", code); send(request, Protocol.ROOT_KEY, args); }
+    /** Preview toolbar calibration: the daemon stops injecting and reports each tap's raw position until told otherwise. */
+    public void touchCalibrate(String request, boolean calibrating) {
+        Bundle args = Ipc.request(request); args.putBoolean("calibrating", calibrating); send(request, Protocol.ROOT_TOUCH_CALIBRATE, args);
+    }
+    /** Stores the solved map with the panel binding and hands it to the running daemon; an empty text clears it. */
+    public void saveTouchCalibration(String request, String calibration) {
+        TouchCalibration parsed = TouchCalibration.decode(calibration);
+        if (calibration != null && !calibration.trim().isEmpty() && parsed == null) throw new IllegalArgumentException("无效的校准数据");
+        String text = parsed == null ? "" : parsed.encode();
+        context.getSharedPreferences(dev.ichinomiya.ninebotenhance.ui.TouchSettingsActivity.PREFERENCES, 0).edit().putString("touch_calibration", text).apply();
+        Diagnostics.add("TOUCH calibration " + (parsed == null ? "cleared" : text));
+        Bundle args = Ipc.request(request); args.putString("calibration", text); send(request, Protocol.ROOT_TOUCH_CALIBRATION, args);
+    }
     public void restartApp(String request) { send(request, Protocol.ROOT_RESTART_APP, Ipc.request(request)); }
     public void keyboard(String request, int code, Bundle args) {
         if (code == Protocol.UI_TEXT) { KeyboardPolicy.text(args.getString("text")); send(request, Protocol.ROOT_TEXT, args); }

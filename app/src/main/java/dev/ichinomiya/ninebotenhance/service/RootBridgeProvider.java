@@ -9,6 +9,8 @@ import android.os.*;
 public final class RootBridgeProvider extends ContentProvider {
     @Override public boolean onCreate() { return true; }
     @Override public Bundle call(String method, String arg, Bundle extras) {
+        // A bare ping from any caller: some ROMs refuse to start our process for a service bind but allow a provider call.
+        if ("ping".equals(method)) { Bundle b = new Bundle(); b.putString("version", dev.ichinomiya.ninebotenhance.ipc.Protocol.VERSION); b.putInt("pid", android.os.Process.myPid()); return b; }
         int uid = Binder.getCallingUid();
         if (uid != 2000) throw new SecurityException("需要已降权的 Root 辅助进程");
         return RootSession.get(getContext()).handshake(method, arg, extras == null ? new Bundle() : extras);

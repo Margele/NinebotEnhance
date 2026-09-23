@@ -131,6 +131,7 @@ public final class CoreTests {
         NaviResumeTests.run();
         LampTests.run();
         BmsTests.run();
+        TouchPanelTests.run();
         FramePacerTests.run();
         themeTests();
         componentContractTests();

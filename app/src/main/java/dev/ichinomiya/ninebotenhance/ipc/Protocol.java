@@ -1,8 +1,8 @@
 package dev.ichinomiya.ninebotenhance.ipc;
 
 public final class Protocol {
-    public static final String VERSION = "1.1.3";
-    public static final int VERSION_CODE = 41;
+    public static final String VERSION = "1.1.4";
+    public static final int VERSION_CODE = 42;
     public static final String DISPLAY_NAME = "Ninebot Enhance Display";
     public static final String DAEMON_CLASS = "dev.ichinomiya.ninebotenhance.display.RootDisplayMain";
     public static final String MODULE = "dev.ichinomiya.ninebotenhance", TARGET = "cn.ninebot.ninebot";
@@ -21,10 +21,17 @@ public final class Protocol {
     public static final int NAVI_UPDATE = 23, NAVI_SNAPSHOT = 24;
     /** Opens the module's own lamp screen, where its Bluetooth permissions are requested. */
     public static final int LAMP_SETTINGS = 25, BMS_SETTINGS = 26;
+    /** Opens the module's own touch panel screen: pick an external touchscreen and bind it to the virtual display. */
+    public static final int TOUCH_SETTINGS = 27;
+    /** Touch panel calibration from the preview toolbar: enter / leave the tapping mode, then store the solved map. */
+    public static final int TOUCH_CALIBRATE = 28, TOUCH_CALIBRATION = 29;
     public static final String SCREEN_CAPTURE = "screen_capture", CAPTURE_WIDTH = "capture_width", CAPTURE_HEIGHT = "capture_height";
     public static final String CAPTURE_REVISION = "capture_revision", CAPTURE_CONSENT = "capture_consent";
     public static final int ROOT_STOP = 30, ROOT_INPUT = 32, ROOT_KEY = 33, ROOT_RESTART_APP = 34;
     public static final int ROOT_TEXT = 35, ROOT_TYPING_KEY = 36, ROOT_DELETE = 37;
+    public static final int ROOT_TOUCH_CALIBRATE = 38, ROOT_TOUCH_CALIBRATION = 39;
+    /** Daemon to Ninebot, on the session owner Binder: the touch panel's contacts as x / y pairs in frame pixels, and one raw calibration tap. */
+    public static final int OWNER_TOUCH_MARKS = 40, OWNER_TOUCH_SAMPLE = 41;
     public static final String APP_RECOVERY = "appRecovery", APP_RECOVERY_DETAIL = "appRecoveryDetail";
     public static final String APP_LAYOUT_POLICY = "appLayoutPolicy";
     public static boolean validRequest(String value) { return value != null && value.matches("[a-f0-9]{32}"); }

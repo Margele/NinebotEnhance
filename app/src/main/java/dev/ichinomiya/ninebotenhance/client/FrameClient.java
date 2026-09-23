@@ -127,7 +127,97 @@ public final class FrameClient {
     private final EncodingDiagnostics encoding = new EncodingDiagnostics(this::report);
     private volatile String observedRequest;
     private final Object observationLock = new Object();
-    private final IBinder owner = new Binder(); // Liveness only; UI frames remain inside Ninebot.
+    private final dev.ichinomiya.ninebotenhance.core.TouchMarks touchMarks = new dev.ichinomiya.ninebotenhance.core.TouchMarks();
+    private final Paint markFill = new Paint(Paint.ANTI_ALIAS_FLAG), markRing = new Paint(Paint.ANTI_ALIAS_FLAG), markOutline = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint targetText = new Paint(Paint.ANTI_ALIAS_FLAG), targetHalo = new Paint(Paint.ANTI_ALIAS_FLAG);
+    { markFill.setColor(Color.WHITE); markRing.setColor(Color.WHITE); markRing.setStyle(Paint.Style.STROKE); markOutline.setColor(Color.BLACK); markOutline.setStyle(Paint.Style.STROKE);
+      targetText.setColor(Color.WHITE); targetHalo.setColor(Color.BLACK); targetHalo.setStyle(Paint.Style.STROKE); }
+    /** The module reports whether a touch panel is bound; calibration runs from the preview toolbar while a session is live. */
+    private volatile boolean touchBound, calibrating;
+    private int calibrationStep;
+    private final float[][] calibrationRaw = new float[dev.ichinomiya.ninebotenhance.core.TouchCalibration.TARGETS.length][];
+    public boolean touchBound() { return touchBound; }
+    public boolean calibrating() { return calibrating; }
+    /** Preview toolbar: start tapping the frame's targets on the panel, or abandon the run. */
+    public void toggleTouchCalibration(String request) {
+        if (!request.equals(ownerRequest) || !touchBound) return;
+        boolean next;
+        synchronized (touchMarks) { next = !calibrating; calibrating = next; calibrationStep = 0; }
+        Bundle payload = new Bundle(); payload.putBoolean("calibrating", next);
+        control(request, Protocol.TOUCH_CALIBRATE, null, payload);
+        report("CALIBRATE " + (next ? "begin" : "cancel"));
+        View preview = inlinePreview.get(); if (preview != null) preview.postInvalidateOnAnimation();
+    }
+    private void acceptCalibrationSample(float[] raw) {
+        String request = ownerRequest; if (request == null || raw == null || raw.length != 2) return;
+        dev.ichinomiya.ninebotenhance.core.TouchCalibration solved = null; boolean failed = false; int taken;
+        synchronized (touchMarks) {
+            if (!calibrating) return;
+            calibrationRaw[calibrationStep++] = raw; taken = calibrationStep;
+            if (calibrationStep >= calibrationRaw.length) {
+                try { solved = dev.ichinomiya.ninebotenhance.core.TouchCalibration.solve(calibrationRaw, dev.ichinomiya.ninebotenhance.core.TouchCalibration.TARGETS); calibrating = false; }
+                catch (IllegalArgumentException e) { failed = true; report("CALIBRATE rejected: " + e.getMessage()); }
+                calibrationStep = 0;
+            }
+        }
+        report("CALIBRATE sample " + taken + " raw=" + raw[0] + "," + raw[1]);
+        if (solved != null) {
+            Bundle payload = new Bundle(); payload.putString("calibration", solved.encode());
+            control(request, Protocol.TOUCH_CALIBRATION, null, payload);
+            report("CALIBRATE solved " + solved.encode());
+            main.post(() -> { if (context != null) android.widget.Toast.makeText(context, "校准完成", android.widget.Toast.LENGTH_SHORT).show(); });
+        } else if (failed) main.post(() -> { if (context != null) android.widget.Toast.makeText(context, "校准失败，请重新点靶点", android.widget.Toast.LENGTH_SHORT).show(); });
+        View preview = inlinePreview.get(); if (preview != null) preview.postInvalidateOnAnimation();
+    }
+    /** Liveness for the module and the daemon; UI frames remain inside Ninebot. The daemon also posts the touch panel's contacts and calibration taps here. */
+    private final IBinder owner = new Binder() {
+        @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
+            if (code == INTERFACE_TRANSACTION) { reply.writeString(Protocol.DESCRIPTOR); return true; }
+            if (code != Protocol.OWNER_TOUCH_MARKS && code != Protocol.OWNER_TOUCH_SAMPLE) return super.onTransact(code, data, reply, flags);
+            data.enforceInterface(Protocol.DESCRIPTOR);
+            if (Binder.getCallingUid() != 2000) throw new SecurityException("仅允许虚拟屏辅助进程");
+            Bundle args = data.readBundle(getClass().getClassLoader());
+            if (args != null && args.getString(Protocol.REQUEST, "").equals(ownerRequest)) {
+                if (code == Protocol.OWNER_TOUCH_SAMPLE) acceptCalibrationSample(args.getFloatArray("raw"));
+                else {
+                    touchMarks.accept(args.getFloatArray("points"), SystemClock.elapsedRealtime());
+                    View preview = inlinePreview.get(); if (preview != null) preview.postInvalidateOnAnimation();
+                }
+            }
+            reply.writeNoException(); reply.writeBundle(new Bundle()); return true;
+        }
+    };
+    /** Rings at the panel's contacts (frame pixels), drawn over the frame after the HUD. */
+    private void drawTouchMarks(Canvas canvas, int fittedWidth, long now) {
+        float[] points = touchMarks.visible(now); DisplaySettings current = settings;
+        if (points.length < 2 || current == null || current.width <= 0) return;
+        float scale = fittedWidth / (float) current.width, alpha = touchMarks.alpha(now);
+        float radius = dev.ichinomiya.ninebotenhance.core.TouchMarks.RADIUS * scale * (2f - alpha);
+        markFill.setAlpha(Math.round(90 * alpha)); markRing.setAlpha(Math.round(235 * alpha)); markOutline.setAlpha(Math.round(130 * alpha));
+        markRing.setStrokeWidth(3f * scale); markOutline.setStrokeWidth(5.5f * scale);
+        for (int i = 0; i + 1 < points.length; i += 2) {
+            float cx = points[i] * scale, cy = points[i + 1] * scale;
+            canvas.drawCircle(cx, cy, radius, markFill); canvas.drawCircle(cx, cy, radius, markOutline); canvas.drawCircle(cx, cy, radius, markRing);
+        }
+    }
+    /** The target to tap next while calibrating: a crosshair ring with its number, on both the frame and the phone preview. */
+    private void drawCalibrationTarget(Canvas canvas, int fittedWidth, int fittedHeight) {
+        if (!calibrating) return;
+        int step; synchronized (touchMarks) { step = calibrationStep; }
+        float[][] targets = dev.ichinomiya.ninebotenhance.core.TouchCalibration.TARGETS; DisplaySettings current = settings;
+        float[] t = targets[Math.min(step, targets.length - 1)];
+        float scale = fittedWidth / (float) Math.max(1, current == null ? fittedWidth : current.width);
+        float cx = t[0] * fittedWidth, cy = t[1] * fittedHeight, r = 18f * scale, arm = 1.7f * r;
+        markRing.setAlpha(255); markOutline.setAlpha(170); markRing.setStrokeWidth(2.5f * scale); markOutline.setStrokeWidth(5.5f * scale);
+        for (Paint paint : new Paint[]{markOutline, markRing}) {
+            canvas.drawCircle(cx, cy, r, paint);
+            canvas.drawLine(cx - arm, cy, cx + arm, cy, paint); canvas.drawLine(cx, cy - arm, cx, cy + arm, paint);
+        }
+        String label = (step + 1) + " / " + targets.length;
+        targetText.setTextSize(16f * scale); targetHalo.setTextSize(16f * scale); targetHalo.setStrokeWidth(3f * scale);
+        float tx = t[0] < 0.5f ? cx + arm + 6f * scale : cx - arm - 6f * scale - targetText.measureText(label), ty = cy + targetText.getTextSize() / 3f;
+        canvas.drawText(label, tx, ty, targetHalo); canvas.drawText(label, tx, ty, targetText);
+    }
     public FrameClient(String process) {
         this.process = process;
         HandlerThread thread = new HandlerThread("Ninebot-VirtualFrames"); thread.start(); worker = new Handler(thread.getLooper());
@@ -312,6 +402,7 @@ public final class FrameClient {
         beginSessionObservations(request, mode);
         this.mode = mode;
         tires.beginSession(); battery.beginSession(); hud.reset(request); probe.clear(); ride.clear(); hud.acceptTires(tires.snapshot()); hud.acceptBattery(battery.snapshot());
+        touchMarks.clear(); synchronized (touchMarks) { calibrating = false; calibrationStep = 0; }
         ownerRequest = request; active = true; displayReady = false; previewRotated = false; state = "正在连接虚拟屏";
         appRecovery = AppRecoveryState.HIDDEN; appRecoveryDetail = "";
         beginAccepted = null; lastPoll = 0; bridge.ensure();
@@ -451,6 +542,8 @@ public final class FrameClient {
         if (!debugMode.enabled()) {
             int overlaySave = canvas.save(); canvas.translate(r[0], r[1]);
             hud.draw(canvas, Math.round(r[2]-r[0]), Math.round(r[3]-r[1]), SystemClock.elapsedRealtime());
+            drawTouchMarks(canvas, Math.round(r[2]-r[0]), SystemClock.elapsedRealtime());
+            drawCalibrationTarget(canvas, Math.round(r[2]-r[0]), Math.round(r[3]-r[1]));
             // The local simulation shows, on top of everything, what the vehicle dashboard itself paints over the frame.
             DirectSession.Mode current = mode;
             if (current != null && current != DirectSession.Mode.VEHICLE && !dev.ichinomiya.ninebotenhance.core.SidebarLayout.halfScreen(Math.round(r[2]-r[0]), Math.round(r[3]-r[1]))) dev.ichinomiya.ninebotenhance.notification.DashboardOcclusion.draw(canvas, Math.round(r[2]-r[0]), Math.round(r[3]-r[1]), hud.hillHold(SystemClock.elapsedRealtime()), hud.occlusions());
@@ -570,10 +663,11 @@ public final class FrameClient {
         if (request.equals(status.getString(Protocol.REQUEST))) {
             active = status.getBoolean("active"); displayReady = status.getBoolean("ready"); state = status.getString("state", "");
             appRecovery = status.getInt(Protocol.APP_RECOVERY); appRecoveryDetail = status.getString(Protocol.APP_RECOVERY_DETAIL, "");
+            touchBound = status.getBoolean("touch_bound");
             if (status.getBoolean("render_fallback")) forceCompatScale();
         } else {
             active = displayReady = false; state = "模块服务已重启或会话已失效，请重新开始投屏";
-            appRecovery = AppRecoveryState.HIDDEN; appRecoveryDetail = "";
+            appRecovery = AppRecoveryState.HIDDEN; appRecoveryDetail = ""; touchBound = false;
             report("BRIDGE requested session absent after reconnect");
         }
         lastPoll = SystemClock.elapsedRealtime();
@@ -698,7 +792,7 @@ public final class FrameClient {
             int saved = canvas.save();
             try { canvas.clipRect(0, 0, width, height); canvas.drawColor(Color.BLACK);
                 canvas.drawBitmap(picture, null, new RectF(r[0], r[1], r[2], r[3]), paint);
-                if(!debug){int overlaySave=canvas.save();canvas.translate(r[0],r[1]);hud.draw(canvas,Math.round(r[2]-r[0]),Math.round(r[3]-r[1]),SystemClock.elapsedRealtime());canvas.restoreToCount(overlaySave);}
+                if(!debug){int overlaySave=canvas.save();canvas.translate(r[0],r[1]);hud.draw(canvas,Math.round(r[2]-r[0]),Math.round(r[3]-r[1]),SystemClock.elapsedRealtime());drawTouchMarks(canvas,Math.round(r[2]-r[0]),SystemClock.elapsedRealtime());drawCalibrationTarget(canvas,Math.round(r[2]-r[0]),Math.round(r[3]-r[1]));canvas.restoreToCount(overlaySave);}
             } finally { canvas.restoreToCount(saved); }
             replacements++; if (streamStats != null) streamStats.replaced(); return true;
         }
@@ -747,6 +841,20 @@ public final class FrameClient {
                         ?ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE:ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
                 activity.startIntentSenderForResult(intent.getIntentSender(),-1,null,0,0,0,options.toBundle());
             }catch(Exception e){android.widget.Toast.makeText(activity,"无法打开 BMS 管理："+Ipc.error(e),1).show();}
+        },error->{if(!activity.isDestroyed())android.widget.Toast.makeText(activity,error,1).show();});
+    }
+    /** Opens the module's own touch panel screen; the panel is read and held by the module, never by Ninebot. */
+    public void touchSettings(Activity activity,boolean dark){
+        Bundle args=new Bundle();args.putBoolean("dark",dark);
+        metadataCall(Protocol.TOUCH_SETTINGS,args,result->{
+            if(activity.isFinishing()||activity.isDestroyed())return;
+            try{
+                PendingIntent intent=result.getParcelable("touch_intent",PendingIntent.class);
+                if(intent==null)throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
+                ActivityOptions options=ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(Build.VERSION.SDK_INT>=36
+                        ?ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE:ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+                activity.startIntentSenderForResult(intent.getIntentSender(),-1,null,0,0,0,options.toBundle());
+            }catch(Exception e){android.widget.Toast.makeText(activity,"无法打开触摸屏管理："+Ipc.error(e),1).show();}
         },error->{if(!activity.isDestroyed())android.widget.Toast.makeText(activity,error,1).show();});
     }
     public void notificationSettings(Activity activity, boolean dark) {

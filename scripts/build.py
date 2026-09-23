@@ -106,10 +106,10 @@ def main():
         run([tool(bt,'zipalign'),'-c','-P','16','4',apk],records)
         badging=run([tool(bt,'aapt2'),'dump','badging',apk],records)
         assert f"package: name='{PACKAGE}'" in badging and f"versionCode='{code}'" in badging and f"versionName='{name}'" in badging
-        assert "application-label:'Ninebot Enhance'" in badging and 'launchable-activity:' not in badging
+        assert "application-label:'Ninebot Enhance'" in badging and "launchable-activity: name='"+PACKAGE+".ui.ModuleActivity'" in badging
         manifest=run([tool(bt,'aapt2'),'dump','xmltree',apk,'--file','AndroidManifest.xml'],records)
-        assert len(re.findall(r'^\s*E: activity\s',manifest,re.MULTILINE)) == 5
-        assert '.ui.LaunchAppPickerActivity' in manifest
+        assert len(re.findall(r'^\s*E: activity\s',manifest,re.MULTILINE)) == 7
+        assert '.ui.LaunchAppPickerActivity' in manifest and '.ui.TouchSettingsActivity' in manifest
         assert '.ui.NotificationSettingsActivity' in manifest and '.notification.MirrorNotificationListener' in manifest
         assert 'android.permission.BIND_NOTIFICATION_LISTENER_SERVICE' in manifest
         assert '.ui.ScreenCaptureConsentActivity' in manifest and '.service.ScreenCaptureService' in manifest

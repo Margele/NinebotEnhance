@@ -43,7 +43,7 @@ public final class PrivilegedLauncher extends Binder {
                                 + " /system/bin/app_process / " + Protocol.DAEMON_CLASS + " " + DisplaySettings.shellQuote(secret);
                         int uid = android.os.Process.myUid();
                         if (uid == 2000) child = new ProcessBuilder("/system/bin/sh", "-c", command).redirectErrorStream(true).start();
-                        else if (uid == 0) child = new ProcessBuilder("su", "2000", "-c", command).redirectErrorStream(true).start();
+                        else if (uid == 0) child = asShell(command);
                         else throw new SecurityException("Unsupported Shizuku UID");
                         ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
                         result.putParcelable("output", pipe[0]); result.putInt("uid", uid);
@@ -67,6 +67,13 @@ public final class PrivilegedLauncher extends Binder {
             reply.writeNoException(); reply.writeBundle(result); return true;
         } catch (IOException e) { throw new IllegalStateException("无法启动辅助进程：" + e.getClass().getSimpleName()); }
         finally { Binder.restoreCallingIdentity(identity); }
+    }
+    /** Shell uid plus the input group (external touch panels); a su that rejects the group options is retried without them. */
+    private static java.lang.Process asShell(String command) throws IOException {
+        java.lang.Process first = new ProcessBuilder("su", "2000", "-g", "2000", "-G", "1004", "-c", command).redirectErrorStream(true).start();
+        try { Thread.sleep(300); } catch (InterruptedException ignored) {}
+        if (first.isAlive() || first.exitValue() == 0) return first;
+        return new ProcessBuilder("su", "2000", "-c", command).redirectErrorStream(true).start();
     }
     private void shutdown() {
         synchronized (this) { if (child != null) child.destroy(); }

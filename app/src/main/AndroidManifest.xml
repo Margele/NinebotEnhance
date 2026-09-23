@@ -22,7 +22,11 @@
     <application android:forceQueryable="true" android:label="Ninebot Enhance" android:description="@string/module_description"
         android:icon="@android:drawable/sym_def_app_icon" android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:allowBackup="false" android:supportsRtl="true" android:usesCleartextTraffic="false">
-        <!-- No launcher. Private activities are opened through immutable module PendingIntents. -->
+        <!-- The launcher entry only offers the system pages (autostart, notification access); the private activities below are opened through immutable module PendingIntents. -->
+        <activity android:name=".ui.ModuleActivity" android:exported="true" android:label="Ninebot Enhance" android:excludeFromRecents="true">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="de.robv.android.xposed.category.MODULE_SETTINGS" /></intent-filter>
+        </activity>
         <activity android:name=".ui.LaunchAppPickerActivity" android:exported="false"
             android:excludeFromRecents="true" />
         <activity android:name=".ui.NotificationSettingsActivity" android:exported="false"
@@ -30,6 +34,8 @@
         <activity android:name=".ui.LampSettingsActivity" android:exported="false"
             android:excludeFromRecents="true" />
         <activity android:name=".ui.BmsSettingsActivity" android:exported="false"
+            android:excludeFromRecents="true" />
+        <activity android:name=".ui.TouchSettingsActivity" android:exported="false"
             android:excludeFromRecents="true" />
         <service android:name=".notification.MirrorNotificationListener" android:exported="true"
             android:label="Ninebot Enhance" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">

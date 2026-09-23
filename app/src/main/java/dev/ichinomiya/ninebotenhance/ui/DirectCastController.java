@@ -395,8 +395,10 @@ public final class DirectCastController implements Application.ActivityLifecycle
         Button widgets=new Button(activity);widgets.setText("控件管理");
         Button encoder=new Button(activity);encoder.setText("设置覆盖");
         Button hidden=new Button(activity);hidden.setText("隐藏功能");
-        for (Button tool : new Button[]{widgets, encoder, hidden}) {
-            theme.button(tool, null); tool.setTextSize(13); tool.setMaxLines(1); tool.setPadding(MirrorUi.dp(activity, 4), tool.getPaddingTop(), MirrorUi.dp(activity, 4), tool.getPaddingBottom());
+        Button touch=new Button(activity);touch.setText("触摸屏管理");
+        for (Button tool : new Button[]{widgets, encoder, hidden, touch}) {
+            theme.button(tool, null); tool.setTextSize(13); tool.setMaxLines(1); tool.setPadding(MirrorUi.dp(activity, 2), tool.getPaddingTop(), MirrorUi.dp(activity, 2), tool.getPaddingBottom());
+            tool.setAutoSizeTextTypeUniformWithConfiguration(10, 13, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
             LinearLayout.LayoutParams toolParams = new LinearLayout.LayoutParams(0, -2, 1); if (tools.getChildCount() > 0) toolParams.setMarginStart(MirrorUi.dp(activity, 8));
             tools.addView(tool, toolParams);
         }
@@ -404,6 +406,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
         widgets.setOnClickListener(v->WidgetSettingsDialog.show(activity,frames,card));
         encoder.setOnClickListener(v->EncoderOverrideDialog.show(activity,frames,card,session.phase()==DirectSession.Phase.IDLE));
         hidden.setOnClickListener(v->HiddenFeatureDialog.show(activity,frames,card));
+        touch.setOnClickListener(v->frames.touchSettings(activity,theme.dark));
         TextView appLabel = new TextView(activity); appLabel.setText("启动应用"); appLabel.setTextColor(theme.secondary); appLabel.setPadding(0, pad / 2, 0, pad / 3); layout.addView(appLabel);
         ChoiceSpinner appPicker = new ChoiceSpinner(activity, theme, "选择启动应用");
         ArrayList<Bundle> apps = new ArrayList<>();
@@ -595,18 +598,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
         new AlertDialog.Builder(activity).setTitle("自启动权限").setMessage(ServiceBridge.AUTOSTART_HINT)
                 .setPositiveButton("打开设置", (d, w) -> openAutostart(activity)).setNegativeButton("关闭", null).show();
     }
-    private void openAutostart(Activity activity) {
-        Intent[] candidates = {
-            new Intent("miui.intent.action.APP_PERM_EDITOR").setClassName("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity").putExtra("extra_pkgname", Protocol.MODULE),
-            new Intent("miui.intent.action.OP_AUTO_START").addCategory(Intent.CATEGORY_DEFAULT),
-            new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(android.net.Uri.parse("package:" + Protocol.MODULE)),
-        };
-        for (Intent candidate : candidates) {
-            try { activity.startActivity(candidate.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); frames.report("SETTINGS autostart page " + candidate.getAction()); return; }
-            catch (RuntimeException ignored) {}
-        }
-        frames.report("SETTINGS autostart page unavailable");
-    }
+    private void openAutostart(Activity activity) { AutostartPages.open(activity, frames::report); }
     public void entryDetails(Activity activity, View card) {
         if (!usable(activity)) return;
         frames.report("DIRECT ENTRY " + VehicleCardInjector.entryInfo(card));

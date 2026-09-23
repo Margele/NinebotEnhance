@@ -76,13 +76,15 @@ public final class MirrorModule extends XposedModule {
     @Override public void onModuleLoaded(ModuleLoadedParam param) {
         process = param.getProcessName(); ModuleResources.initialize(getModuleApplicationInfo().sourceDir);
     }
+    /** Ninebot runs helper processes (":pushcore" and others); only the main process shows the vehicle page and needs the module. */
+    private boolean mainProcess() { return process == null || process.equals(Protocol.TARGET); }
     @Override public void onPackageLoaded(PackageLoadedParam param) {
-        if (Protocol.TARGET.equals(param.getPackageName())) install(param.getDefaultClassLoader());
+        if (Protocol.TARGET.equals(param.getPackageName())) { if (mainProcess()) install(param.getDefaultClassLoader()); }
         else if (NaviApps.supported(param.getPackageName())) naviApps(param.getPackageName()).install(param.getDefaultClassLoader());
     }
     @Override public void onPackageReady(PackageReadyParam param) {
         if (NaviApps.supported(param.getPackageName())) { naviApps(param.getPackageName()).ready(param.getClassLoader()); return; }
-        if (!Protocol.TARGET.equals(param.getPackageName())) return;
+        if (!Protocol.TARGET.equals(param.getPackageName()) || !mainProcess()) return;
         install(param.getClassLoader()); loaders.add(param.getClassLoader());
     }
     /** Navigation apps get their own observe-only probe; the Ninebot hooks are never installed there. */

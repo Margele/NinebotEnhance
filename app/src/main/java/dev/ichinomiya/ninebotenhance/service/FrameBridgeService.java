@@ -80,6 +80,14 @@ public final class FrameBridgeService extends Service {
                             android.app.PendingIntent.FLAG_IMMUTABLE | android.app.PendingIntent.FLAG_UPDATE_CURRENT, bmsOptions.toBundle()));
                     break;
                 }
+                case Protocol.TOUCH_SETTINGS: {
+                    android.app.ActivityOptions touchOptions = android.app.ActivityOptions.makeBasic();
+                    if (Build.VERSION.SDK_INT >= 35) touchOptions.setPendingIntentCreatorBackgroundActivityStartMode(android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+                    Intent touchIntent = new Intent(FrameBridgeService.this, dev.ichinomiya.ninebotenhance.ui.TouchSettingsActivity.class).putExtra("dark", args.getBoolean("dark", true));
+                    result.putParcelable("touch_intent", android.app.PendingIntent.getActivity(FrameBridgeService.this, 805, touchIntent,
+                            android.app.PendingIntent.FLAG_IMMUTABLE | android.app.PendingIntent.FLAG_UPDATE_CURRENT, touchOptions.toBundle()));
+                    break;
+                }
                 case Protocol.LAUNCH_APP_PICKER: {
                     android.app.ActivityOptions pickerOptions = android.app.ActivityOptions.makeBasic();
                     if (Build.VERSION.SDK_INT >= 35) pickerOptions.setPendingIntentCreatorBackgroundActivityStartMode(android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
@@ -154,6 +162,12 @@ public final class FrameBridgeService extends Service {
                 case Protocol.UI_BACK:
                     session.requireController(args.getString(Protocol.REQUEST), uid);
                     session.key(args.getString(Protocol.REQUEST), KeyEvent.KEYCODE_BACK); break;
+                case Protocol.TOUCH_CALIBRATE:
+                    session.requireController(args.getString(Protocol.REQUEST), uid);
+                    session.touchCalibrate(args.getString(Protocol.REQUEST), args.getBoolean("calibrating")); break;
+                case Protocol.TOUCH_CALIBRATION:
+                    session.requireController(args.getString(Protocol.REQUEST), uid);
+                    session.saveTouchCalibration(args.getString(Protocol.REQUEST), args.getString("calibration", "")); break;
                 case Protocol.UI_RESTART_APP:
                     session.requireController(args.getString(Protocol.REQUEST), uid);
                     session.restartApp(args.getString(Protocol.REQUEST)); break;

@@ -5,6 +5,7 @@ import android.net.Uri;
 import dev.ichinomiya.ninebotenhance.core.DisplayInputTransform;
 import dev.ichinomiya.ninebotenhance.core.DisplaySettings;
 import dev.ichinomiya.ninebotenhance.core.FramePacer;
+import dev.ichinomiya.ninebotenhance.core.TouchPanel;
 import dev.ichinomiya.ninebotenhance.diagnostics.Diagnostics;
 import dev.ichinomiya.ninebotenhance.diagnostics.LogDigest;
 import dev.ichinomiya.ninebotenhance.ipc.Ipc;
@@ -41,6 +42,7 @@ public final class RootDisplayMain {
     private RootDisplayPower displayPower;
     private RootDisplayOrientation displayOrientation;
     private RootKeyboard keyboard;
+    private RootTouchPanel touchPanel;
     private Surface surface;
     private String request;
     private int moduleUid, displayId = -1;
@@ -211,6 +213,13 @@ public final class RootDisplayMain {
             if (!Boolean.TRUE.equals(inject.invoke(inputManager, event, 2))) throw new IllegalStateException("系统拒绝副屏键盘输入");
         }, this::log);
         keyboard.configure();
+        TouchPanel panel = TouchPanel.read(config::getInt, config::getString);
+        if (panel.bound()) {
+            // The panel covers the whole frame; its contacts arrive in RGBA buffer coordinates like the phone preview, so sendTouch serves both.
+            touchPanel = new RootTouchPanel(panel, settings.width, settings.height, settings.virtualWidth, settings.virtualHeight, this::sendTouch,
+                    panel.marks() ? this::sendMarks : null, this::sendSample, this::log);
+            touchPanel.start();
+        }
         Bundle ready = new Bundle(); ready.putBinder("root", endpoint); ready.putInt("displayId", displayId);
         ready.putString(Protocol.APP_LAYOUT_POLICY, appLayoutPolicy); providerCall("ready", ready);
         launch(selectedApp);
@@ -233,6 +242,12 @@ public final class RootDisplayMain {
                     case Protocol.ROOT_TYPING_KEY: keyboard.key(args.getInt("key"), args.getInt("action", -1), args.getInt("meta")); break;
                     case Protocol.ROOT_DELETE: keyboard.delete(args.getInt("before"), args.getInt("after")); break;
                     case Protocol.ROOT_STOP: main.post(RootDisplayMain.this::exit); break;
+                    case Protocol.ROOT_TOUCH_CALIBRATE:
+                        if (touchPanel == null) throw new IllegalStateException("未绑定触摸屏");
+                        touchPanel.setCalibrating(args.getBoolean("calibrating")); break;
+                    case Protocol.ROOT_TOUCH_CALIBRATION:
+                        if (touchPanel == null) throw new IllegalStateException("未绑定触摸屏");
+                        touchPanel.setPanel(touchPanel.panel().withCalibration(dev.ichinomiya.ninebotenhance.core.TouchCalibration.decode(args.getString("calibration")))); break;
                     case Protocol.ROOT_RESTART_APP:
                         if (restartQueued.compareAndSet(false, true)) main.post(() -> {
                             try { if (!stopped.get()) restartSelectedApp(); }
@@ -267,7 +282,8 @@ public final class RootDisplayMain {
         setDisplayId.invoke(event, displayId);
         if (!Boolean.TRUE.equals(inject.invoke(inputManager, event, 0))) throw new SecurityException("系统拒绝虚拟屏输入注入");
     }
-    private void sendTouch(MotionEvent event) throws Exception {
+    /** Shared by the phone preview (Binder threads) and the external touch panel (its reader thread); one gesture state. */
+    private synchronized void sendTouch(MotionEvent event) throws Exception {
         if (display == null || stopped.get()) return;
         Display target = display.getDisplay(); Point size = new Point(); target.getRealSize(size);
         int rotation = target.getRotation(), action = event.getActionMasked();
@@ -284,7 +300,19 @@ public final class RootDisplayMain {
         if (lastTouch != null) { lastTouch.recycle(); lastTouch = null; }
         if (action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL) lastTouch = MotionEvent.obtainNoHistory(event);
     }
-    private void cancelTouch() throws Exception {
+    private long lastMarksError;
+    /** The panel's contacts go straight to the Ninebot process on the session owner Binder, which paints them on the frame. */
+    private void sendMarks(float[] points) { ownerPost(Protocol.OWNER_TOUCH_MARKS, "points", points, "marks"); }
+    /** One calibration tap, raw normalized; the Ninebot process collects the targets and solves the map. */
+    private void sendSample(float[] raw) { ownerPost(Protocol.OWNER_TOUCH_SAMPLE, "raw", raw, "sample"); }
+    private void ownerPost(int code, String key, float[] values, String what) {
+        if (stopped.get() || owner == null) return;
+        try { Bundle data = Ipc.request(request); data.putFloatArray(key, values); Ipc.call(owner, code, data); }
+        catch (Exception e) {
+            if (SystemClock.elapsedRealtime() - lastMarksError > 5000) { lastMarksError = SystemClock.elapsedRealtime(); log("TOUCH " + what + " " + Ipc.error(e)); }
+        }
+    }
+    private synchronized void cancelTouch() throws Exception {
         if (lastTouch == null) return;
         MotionEvent cancel = lastTouch; lastTouch = null;
         try { cancel.setAction(MotionEvent.ACTION_CANCEL); sendInput(cancel); }
@@ -464,6 +492,7 @@ public final class RootDisplayMain {
     }
     private void release() {
         main.removeCallbacks(appWatch); main.removeCallbacks(resumeWatch); resumeUri = null;
+        if (touchPanel != null) { touchPanel.close(); touchPanel = null; }
         if (keyboard != null) keyboard.close();
         if (displayOrientation != null) displayOrientation.close();
         if (displayPower != null) displayPower.close();
