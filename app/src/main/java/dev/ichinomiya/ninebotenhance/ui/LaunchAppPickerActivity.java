@@ -1,6 +1,8 @@
 package dev.ichinomiya.ninebotenhance.ui;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.graphics.Insets;
 import android.graphics.drawable.Drawable;
@@ -24,6 +26,11 @@ public final class LaunchAppPickerActivity extends Activity {
     private String selected;
     private boolean loading, reloadOnFocus, delivered, retryAfterLoad, resumed, returningFromSettings;
     private int focusRetries;
+    private Button expand;
+    private boolean expanded, catalogOk;
+    private String selectedPackage = "";
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private static final Set<String> MAPS = new HashSet<>(Arrays.asList("com.autonavi.minimap", "com.baidu.BaiduMap", "com.tencent.map"));
 
     @Override protected void onCreate(Bundle saved) {
         boolean dark = getIntent().getBooleanExtra("dark", true);
@@ -31,6 +38,8 @@ public final class LaunchAppPickerActivity extends Activity {
         super.onCreate(saved); theme = new MirrorUi(dark);
         receiver = getIntent().getParcelableExtra(RESULT, ResultReceiver.class);
         selected = getIntent().getStringExtra(AppCatalog.SELECTED);
+        ComponentName selectedComponent = selected == null ? null : ComponentName.unflattenFromString(selected);
+        selectedPackage = selectedComponent == null ? "" : selectedComponent.getPackageName();
         int pad = MirrorUi.dp(this, 20), gap = MirrorUi.dp(this, 12);
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(theme.surface); root.setForceDarkAllowed(false); root.setPadding(pad,pad,pad,pad);
@@ -56,6 +65,9 @@ public final class LaunchAppPickerActivity extends Activity {
             catch (RuntimeException e) { returningFromSettings=false; Toast.makeText(this,"请在系统应用权限中允许 Ninebot Enhance 读取应用列表",Toast.LENGTH_LONG).show(); }
         });
         refresh.setOnClickListener(v -> { focusRetries=1; loadApps(); });
+        expand = button("显示全部应用"); LinearLayout.LayoutParams expandParams = new LinearLayout.LayoutParams(-1,-2); expandParams.topMargin=gap;
+        root.addView(expand, expandParams);
+        expand.setOnClickListener(v -> { if (expanded) { expanded=false; expand.setText("显示全部应用"); adapter.filter(); updateStatus(); } else promptExpand(); });
         Button cancel = button("取消"); LinearLayout.LayoutParams cancelParams = new LinearLayout.LayoutParams(-1,-2); cancelParams.topMargin=gap;
         root.addView(cancel,cancelParams); cancel.setOnClickListener(v -> finish()); setContentView(root);
         if (saved!=null) search.setText(saved.getString("query",""));
@@ -92,13 +104,43 @@ public final class LaunchAppPickerActivity extends Activity {
             ArrayList<Bundle> result=apps; boolean ok=success;
             runOnUiThread(() -> {
                 if(isFinishing()||isDestroyed())return;
-                loading=false; refresh.setEnabled(true); adapter.all.clear(); adapter.all.addAll(result); adapter.filter();
-                status.setText(ok ? "共 "+result.size()+" 个可启动应用" : "应用列表读取失败，请检查应用列表权限后刷新。");
+                loading=false; catalogOk=ok; refresh.setEnabled(true); adapter.all.clear(); adapter.all.addAll(result); adapter.filter();
+                updateStatus();
                 // Some OEM permission dialogs return an initial filtered list before consent.
                 // Retry once on focus return, never loop requests after a denial.
                 if(retryAfterLoad) { retryAfterLoad=false; if(hasWindowFocus())loadApps(); else reloadOnFocus=true; }
             });
         },"Ninebot-LauncherApps").start();
+    }
+    private void updateStatus() {
+        if (loading) { status.setText("正在读取应用列表…"); return; }
+        if (!catalogOk) { status.setText("应用列表读取失败，请检查应用列表权限后刷新。"); return; }
+        if (expanded) { status.setText("共 "+adapter.all.size()+" 个可启动应用"); return; }
+        int maps=0; for (Bundle app : adapter.all) if (MAPS.contains(app.getString("package"))) maps++;
+        status.setText("地图应用 "+maps+" 个");
+    }
+    /** The gate before every launcher app becomes selectable: a fixed-wait safety notice, then the full list. */
+    private void promptExpand() {
+        int pad = MirrorUi.dp(this, 20);
+        TextView title = new TextView(this); title.setText("显示全部应用"); title.setTextSize(20); title.setTextColor(theme.text);
+        title.setPadding(pad, pad, pad, pad / 2);
+        TextView body = new TextView(this); body.setText("请勿投屏娱乐类的应用，骑车注意安全"); body.setTextSize(15); body.setTextColor(theme.secondary);
+        body.setPadding(pad, pad / 2, pad, pad); body.setLineSpacing(MirrorUi.dp(this, 3), 1);
+        AlertDialog dialog = new AlertDialog.Builder(this).setCustomTitle(title).setView(body).setCancelable(false)
+                .setNegativeButton("取消", null).setPositiveButton("同意", null).create();
+        dialog.show();
+        if (dialog.getWindow() != null) dialog.getWindow().setBackgroundDrawable(theme.background(this, theme.surface, 24, false));
+        Button agree = dialog.getButton(AlertDialog.BUTTON_POSITIVE), cancel = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
+        agree.setTextColor(theme.accent); cancel.setTextColor(theme.accent);
+        int[] left = {10}; agree.setEnabled(false); agree.setText("同意（"+left[0]+"）");
+        Runnable tick = new Runnable() { @Override public void run() {
+            if (!dialog.isShowing() || isFinishing() || isDestroyed()) return;
+            left[0]--;
+            if (left[0] <= 0) { agree.setEnabled(true); agree.setText("同意"); }
+            else { agree.setText("同意（"+left[0]+"）"); ui.postDelayed(this, 1000); }
+        }};
+        ui.postDelayed(tick, 1000);
+        agree.setOnClickListener(v -> { if (left[0] > 0) return; expanded=true; expand.setText("只显示地图"); adapter.filter(); updateStatus(); dialog.dismiss(); });
     }
     private void applyBars() {
         if(theme==null)return;
@@ -108,7 +150,7 @@ public final class LaunchAppPickerActivity extends Activity {
         getWindow().setStatusBarContrastEnforced(false); getWindow().setNavigationBarContrastEnforced(false);
     }
     private void sendResult(int code,Bundle app) { if(delivered)return;delivered=true;if(receiver!=null)receiver.send(code,app); }
-    @Override protected void onDestroy() { if(isFinishing())sendResult(RESULT_CANCELED,null); super.onDestroy(); }
+    @Override protected void onDestroy() { ui.removeCallbacksAndMessages(null); if(isFinishing())sendResult(RESULT_CANCELED,null); super.onDestroy(); }
     @Override protected void onSaveInstanceState(Bundle state) { super.onSaveInstanceState(state); state.putString("query",search.getText().toString()); }
     private TextView label(String text,int size) {
         TextView v=new TextView(this); v.setText(text); v.setTextSize(size); v.setTextColor(size>=16?theme.text:theme.secondary);
@@ -120,7 +162,11 @@ public final class LaunchAppPickerActivity extends Activity {
         final android.util.LruCache<String,Drawable> icons=new android.util.LruCache<>(48);
         void filter() {
             String query=search.getText().toString().trim().toLowerCase(Locale.ROOT); visible.clear();
-            for(Bundle app:all)if(app.getString("label","").toLowerCase(Locale.ROOT).contains(query)||app.getString("package","").toLowerCase(Locale.ROOT).contains(query))visible.add(app);
+            for(Bundle app:all){
+                String pkg=app.getString("package","");
+                if(!expanded && !MAPS.contains(pkg) && !pkg.equals(selectedPackage)) continue;
+                if(app.getString("label","").toLowerCase(Locale.ROOT).contains(query)||pkg.toLowerCase(Locale.ROOT).contains(query))visible.add(app);
+            }
             notifyDataSetChanged();
         }
         public int getCount(){return visible.size();} public Object getItem(int p){return visible.get(p);} public long getItemId(int p){return p;}
