@@ -124,7 +124,7 @@ public final class LaunchAppPickerActivity extends Activity {
         int pad = MirrorUi.dp(this, 20);
         TextView title = new TextView(this); title.setText("显示全部应用"); title.setTextSize(20); title.setTextColor(theme.text);
         title.setPadding(pad, pad, pad, pad / 2);
-        TextView body = new TextView(this); body.setText("请勿投屏娱乐类的应用，骑车注意安全"); body.setTextSize(15); body.setTextColor(theme.secondary);
+        TextView body = new TextView(this); body.setText("禁止投屏非地图导航应用，本功能仅用于投屏其他地图应用。投屏非地图导航应用导致的任何后果由自己承担。"); body.setTextSize(15); body.setTextColor(theme.secondary);
         body.setPadding(pad, pad / 2, pad, pad); body.setLineSpacing(MirrorUi.dp(this, 3), 1);
         AlertDialog dialog = new AlertDialog.Builder(this).setCustomTitle(title).setView(body).setCancelable(false)
                 .setNegativeButton("取消", null).setPositiveButton("同意", null).create();

@@ -25,25 +25,24 @@ import java.util.WeakHashMap;
 import java.util.regex.Pattern;
 
 /**
- * The module's button row on the vehicle page: virtual display, cast, settings. It sits in the page column right above Ninebot's
- * location card (车辆定位 / 最近骑行 / 总里程: layout_detail_location_card, or the multi-card layout_detail_location_card_item),
- * which the page shows whether or not the vehicle is connected, so the virtual display can be started offline. The navigation card
- * (layout_detail_navigation_card, res/0oW.xml, identical in 6.10.10 and 6.10.11) only appears while the vehicle is connected; it
- * still supplies the cruise entry a cast needs, and it is the fallback anchor for a page without a location card. The page is walked
- * from its decor view: right after either card inflates and, as before, every 1.2 s while a host activity is in front.
+ * The module's button row on the vehicle page: virtual display, cast, settings. As in 1.1.4 it sits inside Ninebot's navigation
+ * card (layout_detail_navigation_card, res/0oW.xml, identical in 6.10.10 and 6.10.11) below layoutHistory, taking over that view's
+ * bottom constraint. The card only appears while the vehicle is connected, so the row comes and goes with it; the ownership line at
+ * the bottom of the page is the offline way into the settings. The page is walked from its decor view: right after the card
+ * inflates and, as before, every 1.2 s while a host activity is in front.
  */
 public final class VehicleCardInjector {
     private static final String MARKER = "dev.ichinomiya.ninebotenhance.direct-button";
     private static final String HARDKEY_MARKER = MARKER + ".hardkey";
     public static final String NAVIGATION_CARD = "layout_detail_navigation_card", LOCATION_CARD = "layout_detail_location_card", LOCATION_ITEM = "layout_detail_location_card_item";
-    private static final long REFRESH_MS = 1000, FALLBACK_DELAY_MS = 1500;
+    private static final long REFRESH_MS = 1000;
     private static final int SCAN_BUDGET = 2500;
     /** Ninebot's own inner-control look on the vehicle page: color_select_bg on a 15 dp radius, no outline (background_card_gray_r15). */
     private static final int NINEBOT_FILL_DARK = 0xff1c1f24, NINEBOT_FILL_LIGHT = 0xfff3f5f8, NINEBOT_RADIUS_DP = 15;
     /** The ownership-days line at the bottom of the vehicle page; its text is data-driven, so it is matched by content. */
     private static final Pattern OWNERSHIP = Pattern.compile("拥有爱车");
     /** One installed row; {@code anchor} is the card it was placed against and doubles as the theme reference. */
-    public record Row(LinearLayout view, ImageButton display, Button cast, Button settings, View anchor, boolean fallback, MirrorUi theme) {}
+    public record Row(LinearLayout view, ImageButton display, Button cast, Button settings, View anchor, MirrorUi theme) {}
     private final WeakHashMap<View, Boolean> ownershipLabels = new WeakHashMap<>();
     private final WeakHashMap<View, Row> rows = new WeakHashMap<>();
     private WeakReference<View> navigationCard = new WeakReference<>(null);
@@ -73,17 +72,14 @@ public final class VehicleCardInjector {
     }
     /** Ninebot's navigation card, if the page currently shows one. */
     public View navigationCard() { return navigationCard.get(); }
-    /** The original cruise entry a cast can click right now: the card is on screen in this activity and the button is live. */
-    public View cruiseEntry(Activity activity) {
+    /** The original cruise entry a cast clicks: ivCruise in the page's navigation card, whether or not Ninebot currently shows it. */
+    public View cruiseEntry() {
         View card = navigationCard.get();
-        if (card == null || !card.isAttachedToWindow() || !card.isShown()) return null;
-        if (activity != null && activity(card.getContext()) != activity) return null;
-        View cruise = cruise(card);
-        return cruise != null && cruise.isShown() && cruise.isEnabled() && cruise.hasOnClickListeners() ? cruise : null;
+        return card != null && card.isAttachedToWindow() ? cruise(card) : null;
     }
     private void scan(View root) {
         if (root == null) return;
-        View navigation = null, history = null, anchor = null;
+        View navigation = null, history = null;
         ArrayDeque<View> queue = new ArrayDeque<>(); queue.add(root);
         for (int count = 0; !queue.isEmpty() && count < SCAN_BUDGET; count++) {
             View view = queue.removeFirst();
@@ -96,100 +92,20 @@ public final class VehicleCardInjector {
                 View places = child((ViewGroup)view, "layoutNavigation");
                 if (cruise != null && pastRides != null && places != null) { navigation = view; history = pastRides; continue; }
             }
-            // The map mask sits in both location card layouts; the map itself is heavy and never holds anything of ours.
-            if (name.equals("mapMask") || name.equals("mapContainer") || name.equals("mapContainer2")) {
-                if (anchor == null && view.isAttachedToWindow()) anchor = topLevelCard(view);
-                continue;
-            }
+            // The map is heavy and never holds anything of ours.
+            if (name.equals("mapMask") || name.equals("mapContainer") || name.equals("mapContainer2")) continue;
             if (view instanceof ViewGroup) {
                 ViewGroup group = (ViewGroup)view;
                 for (int i = 0; i < group.getChildCount(); i++) queue.addLast(group.getChildAt(i));
             }
         }
         navigationCard = new WeakReference<>(navigation);
-        String found = "anchor=" + (anchor == null ? "none" : anchor.getClass().getSimpleName() + " in " + (anchor.getParent() == null ? "?" : anchor.getParent().getClass().getSimpleName())) + " navigation=" + (navigation != null);
+        String found = "navigation=" + (navigation != null);
         if (!found.equals(lastAnchor)) { lastAnchor = found; frames.report("DIRECT UI " + found); }
-        Row live = liveRow(root);
-        if (anchor != null) {
-            if (live == null || live.fallback() || !directlyAbove(live.view(), anchor)) installAbove(anchor);
-        } else if (navigation != null && live == null) {
-            // The location card normally shows up within the same page build; only a page without one gets the old anchor.
-            View card = navigation, pastRides = history;
-            card.postDelayed(() -> { if (card.isAttachedToWindow() && liveRow(card.getRootView()) == null) installInside((ViewGroup)card, pastRides); }, FALLBACK_DELAY_MS);
-        }
+        if (navigation != null) installInside((ViewGroup)navigation, history);
         refresh();
     }
-    /** The row must sit right above the anchor, allowing only the hard-key card in between. */
-    private static boolean directlyAbove(View row, View anchor) {
-        if (row.getParent() == null || row.getParent() != anchor.getParent()) return false;
-        ViewGroup parent = (ViewGroup)row.getParent();
-        for (int i = parent.indexOfChild(row) + 1; i < parent.getChildCount(); i++) {
-            View next = parent.getChildAt(i);
-            if (HARDKEY_MARKER.equals(next.getTag())) continue;
-            return next == anchor;
-        }
-        return false;
-    }
-    /**
-     * The page column is a vertical LinearLayout directly inside a scroll view; the anchor is the column's child on the way up from
-     * the marker. A page built differently falls back to the nearest vertical column holding at least three cards.
-     */
-    private static View topLevelCard(View marker) {
-        View child = marker, fallback = null;
-        for (ViewParent p = marker.getParent(); p instanceof View; p = ((View)p).getParent()) {
-            View parent = (View)p;
-            boolean column = parent instanceof LinearLayout && ((LinearLayout)parent).getOrientation() == LinearLayout.VERTICAL;
-            if (column && scrollView(parent.getParent())) return child;
-            if (column && fallback == null && ((ViewGroup)parent).getChildCount() >= 3) fallback = child;
-            child = parent;
-        }
-        return fallback;
-    }
-    private static boolean scrollView(ViewParent parent) {
-        for (Class<?> type = parent == null ? null : parent.getClass(); type != null; type = type.getSuperclass()) if (type.getSimpleName().endsWith("ScrollView")) return true;
-        return false;
-    }
-    private Row liveRow(View rootView) {
-        for (Row row : new ArrayList<>(rows.values())) if (row.view().isAttachedToWindow() && row.view().getRootView() == rootView) return row;
-        return null;
-    }
-    /** Takes a row out again, undoing the navigation card's constraint change when it was the fallback anchor. */
-    private void removeRow(Row row) {
-        if (!(row.view().getParent() instanceof ViewGroup)) return;
-        ViewGroup parent = (ViewGroup)row.view().getParent();
-        parent.removeView(row.view());
-        for (int i = parent.getChildCount() - 1; i >= 0; i--) if (HARDKEY_MARKER.equals(parent.getChildAt(i).getTag())) parent.removeViewAt(i);
-        if (row.fallback()) {
-            View history = child(parent, "layoutHistory");
-            if (history != null) try { ViewGroup.LayoutParams params = history.getLayoutParams(); set(params.getClass(), params, "bottomToBottom", 0); history.setLayoutParams(params); }
-            catch (ReflectiveOperationException | RuntimeException ignored) {}
-        }
-        rows.remove(row.view());
-    }
-    /** The row goes into the page column right before the location card; anything installed earlier in this window goes away first. */
-    private void installAbove(View card) {
-        if (!(card.getParent() instanceof LinearLayout) || !card.isAttachedToWindow()) return;
-        Activity activity = activity(card.getContext());
-        if (activity == null || activity.isFinishing()) return;
-        LinearLayout group = (LinearLayout)card.getParent();
-        for (Row row : new ArrayList<>(rows.values())) if (row.view().getRootView() == card.getRootView() || !row.view().isAttachedToWindow()) removeRow(row);
-        int index = group.indexOfChild(card);
-        LinearLayout row;
-        try {
-            row = buildRow(card, false);
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            int start = card.getPaddingStart(), end = card.getPaddingEnd();
-            if (card.getLayoutParams() instanceof ViewGroup.MarginLayoutParams) {
-                ViewGroup.MarginLayoutParams cardParams = (ViewGroup.MarginLayoutParams)card.getLayoutParams();
-                start += cardParams.getMarginStart(); end += cardParams.getMarginEnd();
-            }
-            params.setMarginStart(start); params.setMarginEnd(end); params.topMargin = dp(card, 10);
-            group.addView(row, index, params);
-        } catch (RuntimeException e) { frames.report("DIRECT UI insertion above the location card failed " + e.getClass().getSimpleName()); return; }
-        frames.report("DIRECT UI installed above the location card (" + card.getClass().getSimpleName() + ") at index " + index + "; " + entryInfo(navigationCard.get()));
-        refresh();
-    }
-    /** The pre-1.1.5 placement inside the navigation card below layoutHistory, used only when the page has no location card. */
+    /** The 1.1.4 placement: inside the navigation card below layoutHistory, which gives up its bottom constraint to the row. */
     private void installInside(ViewGroup card, View history) {
         for (int i = 0; i < card.getChildCount(); i++) if (MARKER.equals(card.getChildAt(i).getTag())) { refresh(); return; }
         if (!card.getClass().getName().equals("androidx.constraintlayout.widget.ConstraintLayout")) return;
@@ -211,7 +127,7 @@ public final class VehicleCardInjector {
             set(params, buttonParams, "startToStart", 0); set(params, buttonParams, "endToEnd", 0);
             set(params, buttonParams, "topToBottom", history.getId()); set(params, buttonParams, "bottomToBottom", 0);
             buttonParams.topMargin = dp(card, 12);
-            row = buildRow(card, true);
+            row = buildRow(card);
             history.setLayoutParams(historyParams); card.addView(row, buttonParams);
             frames.report("DIRECT UI installed inside " + NAVIGATION_CARD + " below layoutHistory; " + entryInfo(card));
             refresh();
@@ -221,7 +137,7 @@ public final class VehicleCardInjector {
             frames.report("DIRECT UI insertion failed " + e.getClass().getSimpleName());
         }
     }
-    private LinearLayout buildRow(View reference, boolean fallback) {
+    private LinearLayout buildRow(View reference) {
         Context context = reference.getContext();
         LinearLayout row = new LinearLayout(context); row.setOrientation(LinearLayout.HORIZONTAL);
         row.setId(View.generateViewId()); row.setTag(MARKER);
@@ -243,7 +159,7 @@ public final class VehicleCardInjector {
         LinearLayout.LayoutParams castParams = new LinearLayout.LayoutParams(0, height, 1); castParams.setMarginStart(gap);
         LinearLayout.LayoutParams settingParams = new LinearLayout.LayoutParams(dp(reference, 84), height); settingParams.setMarginStart(gap);
         row.addView(display, displayParams); row.addView(cast, castParams); row.addView(settings, settingParams);
-        rows.put(row, new Row(row, display, cast, settings, reference, fallback, theme));
+        rows.put(row, new Row(row, display, cast, settings, reference, theme));
         return row;
     }
     private static Button button(MirrorUi theme, Context context, int fill) {
@@ -279,23 +195,7 @@ public final class VehicleCardInjector {
         ViewGroup group = (ViewGroup)row.view().getParent();
         View existing = null;
         for (int i = 0; i < group.getChildCount(); i++) if (HARDKEY_MARKER.equals(group.getChildAt(i).getTag())) existing = group.getChildAt(i);
-        boolean wanted = frames.hiddenFeatures().hardkey();
-        if (row.fallback()) { hardkeyConstraint(group, row.view(), existing, wanted); return; }
-        if (!wanted) { if (existing != null) { group.removeView(existing); frames.report("FEATURE hardkey card removed"); } return; }
-        if (existing != null) return;
-        FrameClient.DynamicViewFactory factory = frames.dynamicViewFactory();
-        if (factory == null) { if (!factoryReported) { factoryReported = true; frames.report("FEATURE hardkey card waits for the page factory"); } return; }
-        try {
-            View view = factory.create(group, HiddenFeatures.HARDKEY_TYPE, HiddenFeatures.HARDKEY_CONFIG);
-            // An unsupported type yields Ninebot's plain TextView placeholder; never mount that.
-            if (view == null || view.getClass() == android.widget.TextView.class) { frames.report("FEATURE hardkey card not built"); return; }
-            if (view.getId() == View.NO_ID) view.setId(View.generateViewId());
-            view.setTag(HARDKEY_MARKER);
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams((LinearLayout.LayoutParams)row.view().getLayoutParams());
-            params.height = ViewGroup.LayoutParams.WRAP_CONTENT;
-            group.addView(view, group.indexOfChild(row.view()) + 1, params);
-            frames.report("FEATURE hardkey card installed " + view.getClass().getSimpleName());
-        } catch (ReflectiveOperationException | RuntimeException e) { frames.report("FEATURE hardkey card failed " + e.getClass().getSimpleName()); }
+        hardkeyConstraint(group, row.view(), existing, frames.hiddenFeatures().hardkey());
     }
     private void hardkeyConstraint(ViewGroup card, LinearLayout row, View existing, boolean wanted) {
         ViewGroup.LayoutParams rowParams = row.getLayoutParams(); Class<?> params = rowParams.getClass();

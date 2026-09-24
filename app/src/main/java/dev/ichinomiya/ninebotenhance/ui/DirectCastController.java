@@ -205,17 +205,17 @@ public final class DirectCastController implements Application.ActivityLifecycle
     }
     private void startVehicle(Activity activity) {
         if (session.casting() || !usable(activity)) return;
-        View entry = injector.cruiseEntry(activity);
+        View entry = injector.cruiseEntry();
         frames.report("DIRECT CLICK " + VehicleCardInjector.entryInfo(injector.navigationCard()));
-        if (entry == null) { toast(activity, "车辆未连接，暂不能投屏"); injector.refresh(); return; }
         String request = UUID.randomUUID().toString().replace("-", "");
         if (!session.beginCast(request)) return;
         frames.beginCastObservations(request);
         origin = new WeakReference<>(activity); inlineDeadline = 0;
         frames.report("DIRECT checking vehicle before the cast" + (session.displayRunning() ? "; virtual display already running" : ""));
         try {
-            // Run the selected card's original checks first. Visibility/enabled flags do not gate its bound listener.
-            if (!entry.callOnClick()) { endCast(request, false, "巡航入口尚未绑定启动动作"); return; }
+            // Ninebot's own listener does every vehicle check (connection, capability, power). It stays bound while ivCruise
+            // is hidden, and callOnClick does not care about visibility, so the only thing that cannot be clicked is no view at all.
+            if (entry == null || !entry.callOnClick()) { endCast(request, false, "巡航入口不可用"); return; }
         } catch (RuntimeException e) { endCast(request, true, "巡航启动失败：" + Ipc.error(e)); return; }
         injector.refresh();
         waitVehicle(request, SystemClock.elapsedRealtime() + 90000);
