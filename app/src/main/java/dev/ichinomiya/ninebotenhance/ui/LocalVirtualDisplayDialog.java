@@ -7,8 +7,12 @@ import android.graphics.*;
 import android.graphics.drawable.ColorDrawable;
 import android.view.*;
 import android.widget.*;
+import java.util.function.BooleanSupplier;
 
-/** Phone-only window hosted by the current Ninebot Activity. Does not open a cruise or a new Activity. */
+/**
+ * Phone preview of the running virtual display, hosted by the current Ninebot Activity. Back and the toolbar's close only hide
+ * it: the display, its app and the external touch panel keep running. "横屏" turns the whole window through the host's orientation.
+ */
 public final class LocalVirtualDisplayDialog {
     private final Activity activity;
     private final String request;
@@ -22,7 +26,8 @@ public final class LocalVirtualDisplayDialog {
     private PreviewSystemBars systemBars;
     private boolean closed;
 
-    public LocalVirtualDisplayDialog(Activity activity, String request, FrameClient frames, Runnable end, Runnable diagnostics) {
+    public LocalVirtualDisplayDialog(Activity activity, String request, FrameClient frames, BooleanSupplier landscape, Runnable toggleLandscape,
+                                     Runnable dismissed, Runnable diagnostics) {
         this.activity = activity; this.request = request; this.frames = frames;
         MirrorUi theme = new MirrorUi(activity, activity.findViewById(android.R.id.content));
         dialog = new Dialog(activity, theme.dark ? android.R.style.Theme_Material_NoActionBar : android.R.style.Theme_Material_Light_NoActionBar);
@@ -31,13 +36,14 @@ public final class LocalVirtualDisplayDialog {
         root = new LinearLayout(activity); root.setOrientation(LinearLayout.VERTICAL);
         root.setTag(MirrorUi.PREVIEW_TAG); root.setForceDarkAllowed(false);
         root.setBackgroundColor(theme.surface);
-        picture = new PreviewPicture(activity, request, frames);
-        toolbar = new PreviewToolbar(activity, theme, "虚拟屏预览", picture, end, diagnostics, frames::simulateNotification, frames::dashboardDark, frames::toggleDashboardTheme,
-                () -> frames.touchBound() ? (frames.calibrating() ? "取消校准" : "校准") : null, () -> frames.toggleTouchCalibration(request));
+        // The window turns as a whole, so the picture never takes the quarter turn itself.
+        picture = new PreviewPicture(activity, request, frames, false);
+        toolbar = new PreviewToolbar(activity, theme, "虚拟显示器", picture, diagnostics, landscape, toggleLandscape, frames::dashboardDark, frames::toggleDashboardTheme,
+                frames::calibrationAction, () -> frames.toggleTouchCalibration(request), "关闭", dialog::dismiss);
         root.addView(toolbar, new LinearLayout.LayoutParams(-1, -2));
         FrameLayout screen = new FrameLayout(activity);
         screen.addView(picture, new FrameLayout.LayoutParams(-1, -1));
-        status = new TextView(activity); status.setText("正在创建虚拟屏并打开所选应用…\n无需连接车辆");
+        status = new TextView(activity); status.setText("正在创建虚拟显示器并打开所选应用…");
         status.setTextColor(Color.WHITE); status.setGravity(Gravity.CENTER); status.setPadding(dp(16), dp(16), dp(16), dp(16));
         screen.addView(status, new FrameLayout.LayoutParams(-1, -1));
         recovery = new AppRecoveryOverlay(activity, frames, request, picture::cancelTouch);
@@ -50,8 +56,8 @@ public final class LocalVirtualDisplayDialog {
             if (systemBars != null) systemBars.updateInsets(); return insets;
         });
         dialog.setContentView(root);
-        // Close/back means stop; programmatic dismissal during configuration rebuild is silent.
-        dialog.setOnDismissListener(ignored -> { closeBars(); if (!closed) end.run(); });
+        // Back, the toolbar's close or a tap outside only hide the preview and leave the display running; programmatic closing is silent.
+        dialog.setOnDismissListener(ignored -> { closeBars(); if (!closed) { closed = true; pause(); dismissed.run(); } });
     }
     public void show() {
         dialog.show();
@@ -66,7 +72,7 @@ public final class LocalVirtualDisplayDialog {
                 window.setBackgroundDrawable(new ColorDrawable(theme.surface));
             }, frames);
         }
-        resume(); frames.report("LOCAL preview shown");
+        resume(); frames.report("DISPLAY preview shown");
     }
     public boolean owns(Activity owner) { return activity == owner; }
     public void ready() { if (!closed) { status.setVisibility(View.GONE); picture.invalidate(); } }

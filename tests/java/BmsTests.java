@@ -58,7 +58,7 @@ final class BmsTests {
         BmsSettings settings=new BmsSettings("b4:f5:f6:77:77:0b",2750);
         CoreTests.check(settings.bound()&&settings.mac().equals("B4:F5:F6:77:77:0B")&&settings.pollMs()==2500&&new BmsSettings("",99999).pollMs()==BmsSettings.MAX_POLL_MS&&!BmsSettings.NONE.bound(),"BMS settings normalise the address and step the poll interval");
         BmsState state=BmsState.NONE.withData(d);
-        CoreTests.check(state.ready()&&state.connected(1500,settings.limitMs())&&!state.connected(20000,settings.limitMs())&&!BmsState.of(BmsState.CONNECTING,"").connected(1500,settings.limitMs())&&state.describe().startsWith("已连接 SOC 88%"),"the state reports a fresh reading and expires an old one");
+        CoreTests.check(state.ready()&&state.connected(1500,settings.limitMs())&&!state.connected(20000,settings.limitMs())&&!BmsState.of(BmsState.CONNECTING,"").connected(1500,settings.limitMs())&&state.describe().startsWith("已连接 SOC 88%")&&BmsState.of(BmsState.IDLE,"").describe().equals("未连接")&&!BmsState.of(BmsState.IDLE,"").connected(1500,settings.limitMs()),"the state reports a fresh reading and expires an old one");
         BmsCard.Layout layout=BmsCard.parse("1,2|4,4,9|7");
         CoreTests.check(layout.rows().get(0).equals(List.of(1,2))&&layout.rows().get(1).equals(List.of(4))&&layout.rows().get(2).equals(List.of(7))&&layout.encode().equals("1,2|4|7")&&layout.height()==3*BmsCard.ROW_HEIGHT,"the layout drops repeats and unknown fields and keeps three rows");
         BmsCard.Layout sparse=BmsCard.parse("|3||");

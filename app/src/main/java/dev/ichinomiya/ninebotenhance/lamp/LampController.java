@@ -16,9 +16,10 @@ import java.util.function.Consumer;
 
 /**
  * The module's own GATT link to one TX lamp hoist, running in the module process on the module's own Bluetooth permissions; it
- * never touches the vehicle's link or Ninebot's Bluetooth stack. A bound lamp stays connected, because the volume keys and the
- * dashboard card are dead while the link is down: directly while something waits on it (a cast session or the lamp screen),
- * otherwise handed to the Bluetooth stack with autoConnect, which costs almost nothing and attaches when the lamp reappears.
+ * never touches the vehicle's link or Ninebot's Bluetooth stack. The link lives only while something holds it: a cast session
+ * (every dashboard snapshot renews the hold), a visible Ninebot screen (its status poll renews it) or the lamp screen. When the
+ * last hold lapses the GATT is closed and the controller goes quiet, so a lamp Ninebot is not using is free for anything else
+ * and the module has nothing ticking in the background.
  * <p>
  * Only two commands are ever written: 0x11 to authenticate and 0x12 to drive to a height. The vendor application also echoes a
  * 0x13 travel configuration after each move, but its control-mode bit has no trustworthy source and sending that frame was tried
@@ -27,12 +28,13 @@ import java.util.function.Consumer;
  * height poll.
  */
 public final class LampController {
-    /** One hold from the dashboard snapshot; longer than the one second poll so an occasional late snapshot does not drop the link. */
+    /** One hold from a dashboard snapshot or Ninebot's status poll; longer than the one second poll so a late one does not drop the link. */
     public static final long HOLD_MS=6000;
-    public static final long SCREEN_HOLD_MS=30000;
+    /** The lamp screen renews its hold every few seconds while visible and lets go when it leaves. */
+    public static final long SCREEN_HOLD_MS=15000,SCREEN_RENEW_MS=5000;
+    /** Who holds the link: each source keeps its own deadline and the link stays while any of them is in the future. */
+    public static final int HOLD_SESSION=0,HOLD_FOREGROUND=1,HOLD_SCREEN=2;
     private static final long AUTH_TIMEOUT_MS=8000,RETRY_MS=5000,TICK_MS=1000;
-    /** Standby cadence when nothing is waiting on the link; the stack does the waiting, this only re-arms a dropped attempt. */
-    private static final long BACKGROUND_TICK_MS=15000,BACKGROUND_RETRY_MS=10000;
     /** A write whose completion callback never arrives must not wedge the queue. */
     private static final long WRITE_TIMEOUT_MS=2500;
     /** Ceiling of the growing pause between handshakes the device never answers. */
@@ -50,8 +52,9 @@ public final class LampController {
     private volatile LampSettings settings;
     private volatile LampState state=LampState.NONE;
     private BluetoothGatt gatt;private BluetoothGattCharacteristic writeCharacteristic;
-    private boolean writing,ticking,authenticated,directConnect;private int authFailures;
-    private long heldUntil,retryAt,lastWriteAt,desiredAt,pollUntil;private int desired=-1;private boolean stepScheduled;
+    private boolean writing,ticking,authenticated,idle=true;private int authFailures;
+    private final long[] holds=new long[3];
+    private long retryAt,lastWriteAt,desiredAt,pollUntil;private int desired=-1;private boolean stepScheduled;
     /** Control mode bit of the 0x13 echo; the only field of that frame the device never tells us. */
     /** Height polls: fast while the hoist could still be running after a move, slow while a screen or session is watching. */
     private static final long POLL_DELAY_MS=1200,POLL_WINDOW_MS=20000,POLL_IDLE_MS=15000;
@@ -60,7 +63,7 @@ public final class LampController {
         HandlerThread thread=new HandlerThread("Ninebot-Lamp",android.os.Process.THREAD_PRIORITY_BACKGROUND);thread.start();
         worker=new Handler(thread.getLooper());
         settings=read();
-        state=settings.bound()?LampState.of(LampState.CONNECTING,""):LampState.NONE;
+        state=settings.bound()?LampState.of(LampState.IDLE,""):LampState.NONE;
         worker.post(this::tick);
     }
     // ---------------------------------------------------------------- settings
@@ -89,13 +92,15 @@ public final class LampController {
     public void watch(Consumer<LampState> watcher){watchers.add(watcher);main.post(()->watcher.accept(state));}
     public void unwatch(Consumer<LampState> watcher){watchers.remove(watcher);}
     // ---------------------------------------------------------------- lifetime
-    /** Keep the link open for this long; renewing before it lapses keeps one continuous connection. */
-    public void hold(long millis){
+    /** Keep the link open for this long on behalf of one source; renewing before it lapses keeps one continuous connection. */
+    public void hold(int source,long millis){
         long until=SystemClock.elapsedRealtime()+Math.max(0,millis);
-        worker.post(()->{if(until>heldUntil)heldUntil=until;tick();});
+        worker.post(()->{if(until>holds[source])holds[source]=until;tick();});
     }
-    /** Drops the extra urgency, not the link itself: a bound lamp keeps a standby connection. */
-    public void release(){worker.post(()->{heldUntil=0;tick();});}
+    /** One source lets go now; the link closes on the next tick unless another source still holds it. */
+    public void release(int source){worker.post(()->{holds[source]=0;tick();});}
+    private long heldUntil(){long until=0;for(long value:holds)until=Math.max(until,value);return until;}
+    private boolean held(){return SystemClock.elapsedRealtime()<heldUntil();}
     private static void log(String message){android.util.Log.i(Protocol.TAG,"LAMP "+message);}
     public boolean permitted(){
         return context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)==PackageManager.PERMISSION_GRANTED;
@@ -108,39 +113,38 @@ public final class LampController {
         catch(RuntimeException e){return null;}
     }
     /**
-     * A bound lamp stays connected: the volume keys and the dashboard card are useless while the link is down, and the rider does
-     * not open a screen before reaching for the keys. While something holds the radio (the lamp screen or a cast session) the
-     * connection is direct so it comes up in a second; otherwise it is handed to the Bluetooth stack with autoConnect, which
-     * costs almost nothing and attaches by itself whenever the lamp comes back into range.
+     * The link exists exactly while someone holds it. A held lamp connects directly and is retried every few seconds; once the
+     * last hold lapses the GATT is closed, the state drops to idle and the tick stops, so nothing runs until the next hold. A new
+     * hold after an idle spell starts afresh instead of waiting out a retry pause left over from before.
      */
     private void tick(){
-        long now=SystemClock.elapsedRealtime();boolean held=now<heldUntil;
+        long now=SystemClock.elapsedRealtime();
         LampSettings current=settings;
-        if(!current.bound()){if(gatt!=null)close("");publish(LampState.NONE);stopTicking();return;}
-        if(!permitted()){if(gatt!=null)close("");publish(LampState.of(LampState.DENIED,""));schedule(held);return;}
-        // A pending background attempt is upgraded to a direct one as soon as someone is waiting on it.
-        if(gatt!=null&&held&&!directConnect&&!authenticated){close("");retryAt=0;}
-        if(gatt==null&&now>=retryAt)open(current,held);
-        schedule(held);
+        if(!current.bound()){drop();publish(LampState.NONE);stopTicking();return;}
+        if(now>=heldUntil()){
+            if(!idle){idle=true;log("released");}
+            drop();publish(LampState.of(LampState.IDLE,""));stopTicking();return;
+        }
+        if(idle){idle=false;retryAt=0;}
+        if(!permitted()){drop();publish(LampState.of(LampState.DENIED,""));schedule();return;}
+        if(gatt==null&&now>=retryAt)open(current);
+        schedule();
     }
     private void stopTicking(){ticking=false;worker.removeCallbacks(tickRunnable);}
-    private void schedule(boolean held){
-        worker.removeCallbacks(tickRunnable);ticking=true;
-        worker.postDelayed(tickRunnable,held?TICK_MS:BACKGROUND_TICK_MS);
-    }
+    private void schedule(){worker.removeCallbacks(tickRunnable);ticking=true;worker.postDelayed(tickRunnable,TICK_MS);}
     private final Runnable tickRunnable=new Runnable(){@Override public void run(){ticking=false;tick();}};
-    private void open(LampSettings current,boolean direct){
+    private void open(LampSettings current){
         BluetoothAdapter adapter=adapter();
         if(adapter==null||!adapter.isEnabled()){publish(LampState.of(LampState.FAILED,"蓝牙未开启"));retryAt=SystemClock.elapsedRealtime()+RETRY_MS;return;}
         BluetoothDevice device;
         try{device=adapter.getRemoteDevice(current.mac());}
         catch(RuntimeException e){publish(LampState.of(LampState.FAILED,"地址无效"));return;}
-        queue.clear();writing=false;authenticated=false;writeCharacteristic=null;directConnect=direct;
+        queue.clear();writing=false;authenticated=false;writeCharacteristic=null;
         publish(state.withPhase(LampState.CONNECTING,""));
-        try{gatt=device.connectGatt(context,!direct,callback,BluetoothDevice.TRANSPORT_LE);}
+        try{gatt=device.connectGatt(context,false,callback,BluetoothDevice.TRANSPORT_LE);}
         catch(RuntimeException e){gatt=null;publish(LampState.of(LampState.FAILED,error(e)));}
-        retryAt=SystemClock.elapsedRealtime()+(direct?RETRY_MS:BACKGROUND_RETRY_MS);
-        log("open "+(direct?"direct":"background")+" "+current.mac());
+        retryAt=SystemClock.elapsedRealtime()+RETRY_MS;
+        log("open "+current.mac());
     }
     /**
      * A wrong password looks like silence: this device answers an accepted handshake and ignores a rejected one entirely, so a
@@ -151,12 +155,16 @@ public final class LampController {
         authFailures++;close("密码无应答");
         retryAt=SystemClock.elapsedRealtime()+Math.min(AUTH_BACKOFF_MAX_MS,RETRY_MS*authFailures);
     }};
-    private void close(String detail){
-        worker.removeCallbacks(authTimeout);worker.removeCallbacks(statusPoll);
+    /** Tear the GATT down without saying anything about it; the callers decide what state that leaves. */
+    private void drop(){
+        worker.removeCallbacks(authTimeout);worker.removeCallbacks(statusPoll);worker.removeCallbacks(writeWatchdog);
         BluetoothGatt open=gatt;gatt=null;writeCharacteristic=null;writing=false;authenticated=false;queue.clear();desired=-1;
         if(open!=null)try{open.disconnect();open.close();}catch(RuntimeException ignored){}
+    }
+    private void close(String detail){
+        drop();
         if(!detail.isEmpty())publish(LampState.of(LampState.FAILED,detail));
-        else if(state.phase()!=LampState.UNBOUND&&state.phase()!=LampState.REJECTED)publish(LampState.of(LampState.CONNECTING,""));
+        else if(state.phase()!=LampState.UNBOUND&&state.phase()!=LampState.REJECTED&&state.phase()!=LampState.IDLE)publish(LampState.of(LampState.CONNECTING,""));
     }
     private void publish(LampState next){
         if(next.equals(state))return;
@@ -249,7 +257,7 @@ public final class LampController {
     private final Runnable statusPoll=new Runnable(){@Override public void run(){
         if(gatt==null||!authenticated)return;
         enqueue(TxLampProtocol.auth(settings.password()));
-        long now=SystemClock.elapsedRealtime();boolean moving=now<pollUntil,watched=now<heldUntil;
+        long now=SystemClock.elapsedRealtime();boolean moving=now<pollUntil,watched=now<heldUntil();
         // Re-arming is driven by these two clocks alone; the answer to a poll must never schedule the next one.
         if(moving||watched)worker.postDelayed(this,moving?POLL_DELAY_MS:POLL_IDLE_MS);
     }};
@@ -311,7 +319,7 @@ public final class LampController {
                 boolean first=!authenticated;
                 authenticated=true;authFailures=0;worker.removeCallbacks(authTimeout);retryAt=0;
                 publish(state.withPhase(LampState.READY,""));
-                if(first&&SystemClock.elapsedRealtime()<heldUntil)poll(0);
+                if(first&&held())poll(0);
             }else{authenticated=false;log("password rejected");publish(LampState.of(LampState.REJECTED,""));close("");}
             return;
         }

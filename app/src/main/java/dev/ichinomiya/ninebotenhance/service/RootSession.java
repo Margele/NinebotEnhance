@@ -26,7 +26,6 @@ import java.util.UUID;
 /** Module-process broker. Never performs su or remote Binder calls while holding the session lock. */
 public final class RootSession {
     /** The daemon could not force the display size: the client switches keep-DPI to compat scaling from the next session. */
-    private volatile boolean renderFallback;
     private static RootSession instance;
     public static synchronized RootSession get(Context context) {
         if (instance == null) instance = new RootSession(context.getApplicationContext());
@@ -57,6 +56,8 @@ public final class RootSession {
     private long lastInputError;
     private int appRecovery;
     private long appRecoveryAt;
+    /** The daemon has the bound touch panel's node open right now. */
+    private boolean touchPresent;
     private String appRecoveryDetail = "";
     private String appLayoutPolicy = "not-created";
     private final java.util.concurrent.atomic.AtomicInteger pendingInput = new java.util.concurrent.atomic.AtomicInteger();
@@ -104,11 +105,11 @@ public final class RootSession {
             context.getSharedPreferences("virtual_display", 0).edit().putInt("width", value.width)
                     .putInt("height",value.height).putInt("dpi",value.dpi)
                     .putInt("layout_version",DisplaySettings.LAYOUT_VERSION).putInt("virtual_width",value.virtualWidth).putInt("virtual_height",value.virtualHeight)
-                    .putInt("background_color",value.backgroundColor).putInt("keep_phone_dpi",value.keepPhoneDpi?1:0).putInt("compat_scale",value.compatScale?1:0).putInt("virtual_override",value.virtualOverride?1:0).putInt("light_background_color",value.lightBackgroundColor).remove("top_inset").remove("top_color")
+                    .putInt("background_color",value.backgroundColor).putInt("keep_phone_dpi",value.keepPhoneDpi?1:0).putInt("virtual_override",value.virtualOverride?1:0).putInt("light_background_color",value.lightBackgroundColor).putInt("bottom_inset",value.bottomInset).remove("top_inset").remove("top_color")
                     .putString(AppCatalog.SELECTED, app.flattenToString()).apply();
         }
     }
-    /** Compat scaling: the capture surface size and density the client chose for this session (0 when not in use). */
+    /** Keep-DPI: the surface size and density the client created for this session (0 when the phone density already matches). */
     private int renderWidth, renderHeight, renderDpi;
     public synchronized void setRenderPlan(int width, int height, int dpi) { renderWidth = width; renderHeight = height; renderDpi = dpi; }
     public void begin(String request, Surface output, IBinder client, int uid, DisplaySettings requested, String selected) throws RemoteException {
@@ -130,7 +131,7 @@ public final class RootSession {
             if (android.os.Process.myUid() / 100000 != 0) { output.release(); throw new IllegalStateException("此版本仅支持手机主用户"); }
             if (!lease.begin(request, secret)) { output.release(); throw new IllegalStateException("已有投屏正在运行"); }
             current = requested; launchApp = app; surface = output; owner = client; ownerUid = uid; root = null; displayId = -1;
-            appRecovery = AppRecoveryState.HIDDEN; appRecoveryAt = 0; appRecoveryDetail = "";
+            appRecovery = AppRecoveryState.HIDDEN; appRecoveryAt = 0; appRecoveryDetail = ""; touchPresent = false;
             appLayoutPolicy = "not-created";
             lastRequest = request; backend = "正在选择授权方式"; state = backend;
             ownerDeath = () -> stop(request, "九号进程已退出");
@@ -196,8 +197,9 @@ public final class RootSession {
                 if (!lease.isReady() || root == null) throw new SecurityException("副屏尚未就绪");
                 appRecovery = args.getInt(Protocol.APP_RECOVERY); appRecoveryDetail = LogDigest.head(args.getString(Protocol.APP_RECOVERY_DETAIL, ""), 500);
                 appRecoveryAt = SystemClock.elapsedRealtime();
-            } else if ("render_fallback".equals(method)) {
-                renderFallback = true; Diagnostics.add("ROOT RENDER fallback reported; compat scaling will be forced for the next session");
+            } else if ("touch_state".equals(method)) {
+                boolean present = args.getBoolean("present");
+                if (present != touchPresent) { touchPresent = present; Diagnostics.add("TOUCH panel " + (present ? "present" : "absent")); }
             } else if ("error".equals(method)) {
                 String request = lease.request(), error = args.getString("error", "未知错误");
                 main.post(() -> stop(request, error));
@@ -216,8 +218,8 @@ public final class RootSession {
         result.putBoolean("active", lease.request() != null); result.putBoolean("ready", lease.isReady());
         result.putInt("displayId", displayId); result.putString("state", state);
         result.putString("backend", backend);
-        result.putString(Protocol.APP_LAYOUT_POLICY, appLayoutPolicy); result.putBoolean("render_fallback", renderFallback);
-        result.putBoolean("touch_bound", touchPanel().bound());
+        result.putString(Protocol.APP_LAYOUT_POLICY, appLayoutPolicy);
+        result.putBoolean("touch_bound", touchPanel().bound()); result.putBoolean("touch_present", touchPresent && lease.request() != null);
         result.putString(AppCatalog.SELECTED, launchApp == null ? "" : launchApp.flattenToString());
         boolean recent = appRecoveryAt != 0 && SystemClock.elapsedRealtime() - appRecoveryAt < 5000 && lease.isReady();
         result.putInt(Protocol.APP_RECOVERY, recent ? appRecovery : AppRecoveryState.HIDDEN);
@@ -241,7 +243,7 @@ public final class RootSession {
             endpoint = root; client = owner; output = surface;
             if (client != null && ownerDeath != null) try { client.unlinkToDeath(ownerDeath, 0); } catch (RuntimeException ignored) {}
             if (endpoint != null && rootDeath != null) try { endpoint.unlinkToDeath(rootDeath, 0); } catch (RuntimeException ignored) {}
-            root = owner = null; surface = null; displayId = -1; state = reason;
+            root = owner = null; surface = null; displayId = -1; state = reason; touchPresent = false;
         }
         Diagnostics.add("VD stopped: " + reason);
         TouchPanelUsb.release();

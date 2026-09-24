@@ -12,6 +12,7 @@ import dev.ichinomiya.ninebotenhance.core.BatteryTelemetry;
 import dev.ichinomiya.ninebotenhance.core.RegisterProbe;
 import dev.ichinomiya.ninebotenhance.core.RideState;
 import dev.ichinomiya.ninebotenhance.core.HillHoldDetector;
+import dev.ichinomiya.ninebotenhance.core.DashboardProfile;
 import dev.ichinomiya.ninebotenhance.core.WidgetSettings;
 import dev.ichinomiya.ninebotenhance.core.HudPalette;
 import dev.ichinomiya.ninebotenhance.core.LampState;
@@ -66,14 +67,17 @@ public final class DashboardHud {
     private TireTelemetry.Snapshot tires=TireTelemetry.EMPTY;
     private BatteryTelemetry.Snapshot battery=BatteryTelemetry.EMPTY;
     private WidgetSettings widgets=WidgetSettings.DEFAULT;
-    private volatile List<SidebarLayout.Box> occlusions=SidebarLayout.DEFAULT_OCCLUSIONS;
-    /** Set from the frame the HUD is drawn into: portrait frames use the single-column half-screen layout. */
+    /** Dashboard-painted rectangles from the cast configuration, in reference coordinates; null until one is read. */
+    private volatile List<SidebarLayout.Box> configuredOcclusions;
+    /** Set from the frame the HUD is drawn into: the profile decides the fit, the half-screen single column, the dodge and the volume bar's place. */
+    private volatile DashboardProfile profile=DashboardProfile.of(848,480);
     private volatile boolean halfScreen;
     public boolean halfScreen(){return halfScreen;}
-    private void adopt(SidebarLayout.Fit fit){if(fit.halfScreen()!=halfScreen){halfScreen=fit.halfScreen();timeline.clear();revision++;}}
-    /** Dashboard-painted rectangles in the 848 x 480 reference frame; empty or null restores the calibrated instrument card. */
-    public void setOcclusions(List<SidebarLayout.Box> boxes){occlusions=boxes==null||boxes.isEmpty()?SidebarLayout.DEFAULT_OCCLUSIONS:List.copyOf(boxes);}
-    public List<SidebarLayout.Box> occlusions(){return occlusions;}
+    public DashboardProfile profile(){return profile;}
+    private void adopt(SidebarLayout.Fit fit){profile=fit.profile();if(fit.halfScreen()!=halfScreen){halfScreen=fit.halfScreen();timeline.clear();revision++;}}
+    /** Dashboard-painted rectangles in the 848 x 480 reference frame; empty or null falls back to the profile's measured overlays. */
+    public void setOcclusions(List<SidebarLayout.Box> boxes){configuredOcclusions=boxes==null||boxes.isEmpty()?null:List.copyOf(boxes);}
+    public List<SidebarLayout.Box> occlusions(){List<SidebarLayout.Box> configured=configuredOcclusions;return configured!=null?configured:profile.occlusions();}
     private List<RegisterProbe.Row> probeRows;private RideState.Snapshot ride;
     public synchronized void reset(){reset("");}
     public synchronized void reset(String request){
@@ -98,7 +102,8 @@ public final class DashboardHud {
         if(!Objects.equals(ride,snapshot)){ride=snapshot;revision++;}
         if(snapshot!=null){if(snapshot.speedTenths()>=0)sample(speedHistory,snapshot.speedAt(),snapshot.speedKmh());if(snapshot.hasPower()&&!widgets.enabled(WidgetSettings.POWER_FROM_BMS))sample(powerHistory,snapshot.powerAt(),snapshot.power());}
     }
-    public synchronized boolean hillHold(long now){return !halfScreen&&widgets.enabled(WidgetSettings.HILL_HOLD_DODGE)&&detector.update(ride,now,widgets.holdPowerMin(),widgets.holdPowerMax(),widgets.holdSpeedMaxTenths(),widgets.holdMs());}
+    /** Hill hold is judged on the vehicle's own rSpeed / rPower readings only; BMS priority changes what the power card shows, never this. */
+    public synchronized boolean hillHold(long now){return profile.hillHold()&&widgets.enabled(WidgetSettings.HILL_HOLD_DODGE)&&detector.update(ride,now,widgets.holdPowerMin(),widgets.holdPowerMax(),widgets.holdSpeedMaxTenths(),widgets.holdMs());}
     /** Debug register table; null or empty hides it. Equal snapshots do not re-encode. */
     public synchronized void acceptProbe(List<RegisterProbe.Row> rows){if(!Objects.equals(probeRows,rows)){probeRows=rows;revision++;}}
     private boolean probeShown(){return probeRows!=null&&!probeRows.isEmpty()&&widgets.enabled(WidgetSettings.REGISTER_PROBE);}
@@ -148,7 +153,7 @@ public final class DashboardHud {
         // Small immutable snapshot. Revision changes only on new phone data or notification events.
         if(!samePhone(phone,nextPhone)){phone=nextPhone;revision++;}
         receiving=state.getBoolean("enabled")&&widgets.enabled(WidgetSettings.NOTIFICATIONS);
-        // Simulated preview cards are local and outlive a disabled mailbox until they expire on their own.
+        // Simulated cards are local and outlive a disabled mailbox until they expire on their own.
         // Card motions start at the snapshot time rather than at the next render, so sparse renders still animate correctly.
         if(!receiving){if(now>=simulatedUntil&&!timeline.empty(now)){timeline.clear();revision++;}sync(now);return;}
         ArrayList<Bundle> events=state.getParcelableArrayList("events",Bundle.class);if(events==null){sync(now);return;}
@@ -160,7 +165,7 @@ public final class DashboardHud {
         }revision++;}
         sync(now);
     }
-    /** Preview helper: one synthetic card with the configured width, independent of the phone mailbox and its switches. */
+    /** Fixture for the device smoke tests: one synthetic card with the configured width, independent of the phone mailbox and its switches. No UI reaches it. */
     public synchronized void simulate(long now){
         Bundle e=new Bundle();e.putString("app","Ninebot Enhance");e.putString("title","模拟通知 "+(++simulated));e.putString("text","用于预览通知的位置、宽度和字号");
         int duration=simulatedDuration;timeline.add("simulated-"+simulated,new Card(card(e)),duration,now);
@@ -216,7 +221,7 @@ public final class DashboardHud {
     /** Horizontal offset of the bar: negative while sliding, 0 while holding, NaN while hidden. */
     private float volumeOffset(long now){
         if(!visible(WidgetSettings.VOLUME,now)||volumeShownAt<0||now<volumeShownAt)return Float.NaN;
-        float travel=SidebarLayout.VOLUME.right()+12;
+        float travel=profile.volume().right()-profile.referenceLeft()+12;
         if(now<volumeShownUntil)return -travel*(1-CardMotion.ease(Math.min(1,(now-volumeShownAt)/(float)VOLUME_SLIDE_MS)));
         float exit=(now-volumeShownUntil)/(float)VOLUME_SLIDE_MS;
         return exit>=1?Float.NaN:-travel*CardMotion.ease(exit);
@@ -424,7 +429,7 @@ public final class DashboardHud {
     private float powerWidth(){return metricWidth(widgets.enabled(WidgetSettings.POWER_CHART),"-8888","W");}
     /** Vertical level bar above the dashboard speaker icon; slides in from the left after a volume change, never a touch target. */
     private void drawVolume(Canvas c,long now){
-        float offset=volumeOffset(now);if(Float.isNaN(offset))return;SidebarLayout.Box b=SidebarLayout.VOLUME;
+        float offset=volumeOffset(now);if(Float.isNaN(offset))return;SidebarLayout.Box b=profile.volume();
         int saved=c.save();c.translate(offset,0);
         float radius=b.width()/2;surface(c,b.left(),b.top(),b.width(),b.height(),radius);
         float inset=4,fraction=volumeFill(now);
@@ -493,7 +498,7 @@ public final class DashboardHud {
      */
     private SidebarLayout.Stack layout(List<NotificationTimeline.Entry<Card>> cards,long now){
         float lift=lift(cards,now);boolean hold=hillHold(now);
-        SidebarLayout.Stack actual=SidebarLayout.arrange(widgets,visibleMask(now),lift,halfScreen?SidebarLayout.fullWidth(bmsHeight(now)):sizes(),hold,occlusions,halfScreen);
+        SidebarLayout.Stack actual=SidebarLayout.arrange(widgets,visibleMask(now),lift,halfScreen?SidebarLayout.fullWidth(bmsHeight(now)):sizes(),hold,occlusions(),halfScreen);
         phoneMotion.target(actual.phone(),now);musicMotion.target(actual.music(),now);voltageMotion.target(actual.voltage(),now);tyreMotion.target(actual.tyres(),now);speedMotion.target(actual.speed(),now);powerMotion.target(actual.power(),now);lampMotion.target(actual.lamp(),now);bmsMotion.target(actual.bms(),now);
         actualStack=actual;return actual;
     }

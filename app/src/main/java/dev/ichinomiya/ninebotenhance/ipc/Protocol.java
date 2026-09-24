@@ -1,8 +1,8 @@
 package dev.ichinomiya.ninebotenhance.ipc;
 
 public final class Protocol {
-    public static final String VERSION = "1.1.4";
-    public static final int VERSION_CODE = 42;
+    public static final String VERSION = "1.1.5";
+    public static final int VERSION_CODE = 43;
     public static final String DISPLAY_NAME = "Ninebot Enhance Display";
     public static final String DAEMON_CLASS = "dev.ichinomiya.ninebotenhance.display.RootDisplayMain";
     public static final String MODULE = "dev.ichinomiya.ninebotenhance", TARGET = "cn.ninebot.ninebot";
@@ -32,6 +32,8 @@ public final class Protocol {
     public static final int ROOT_TOUCH_CALIBRATE = 38, ROOT_TOUCH_CALIBRATION = 39;
     /** Daemon to Ninebot, on the session owner Binder: the touch panel's contacts as x / y pairs in frame pixels, and one raw calibration tap. */
     public static final int OWNER_TOUCH_MARKS = 40, OWNER_TOUCH_SAMPLE = 41;
+    /** The host asks for the module's cached GitHub release lookup; a stale cache starts a fresh one. */
+    public static final int UPDATE_CHECK = 42;
     public static final String APP_RECOVERY = "appRecovery", APP_RECOVERY_DETAIL = "appRecoveryDetail";
     public static final String APP_LAYOUT_POLICY = "appLayoutPolicy";
     public static boolean validRequest(String value) { return value != null && value.matches("[a-f0-9]{32}"); }

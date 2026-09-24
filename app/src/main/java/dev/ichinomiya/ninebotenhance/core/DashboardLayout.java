@@ -14,7 +14,7 @@ import java.util.*;
  */
 public record DashboardLayout(int frameWidth,int frameHeight,List<Box> boundRects,List<Box> phoneDrawn,String style) {
     public static final int REFERENCE_WIDTH=848,REFERENCE_HEIGHT=480;
-    /** Codec sizes the boards are known to report range from 240 x 320 (portrait half-screen dashboards) to 848 x 480. */
+    /** Codec sizes the boards are known to report: 240 x 320 (portrait half-screen dashboards), 848 x 480 (five-inch) and 1024 x 600 (seven-inch, 608 when the board aligns the height). */
     public static final int MIN_SIDE=160,MAX_SIDE=1920;
     /** Calibrated fallback used when no configuration has been read: the instrument card measured from a dashboard photo. */
     public static final DashboardLayout DEFAULT=new DashboardLayout(REFERENCE_WIDTH,REFERENCE_HEIGHT,List.of(SidebarLayout.INSTRUMENT),List.of(),"");
@@ -62,12 +62,11 @@ public record DashboardLayout(int frameWidth,int frameHeight,List<Box> boundRect
         }
         return out;
     }
-    /** Occlusions in the HUD's 848 × 480 reference frame, which the HUD fits into the encoder frame anchored bottom right. */
+    /** Occlusions in the HUD's 848 × 480 reference frame, through the same fit the HUD draws with ({@link DashboardProfile}). */
     public List<Box> referenceOcclusions() {
-        float scale=Math.min(frameWidth/(float)REFERENCE_WIDTH,frameHeight/(float)REFERENCE_HEIGHT);
-        float dx=frameWidth-REFERENCE_WIDTH*scale,dy=frameHeight-REFERENCE_HEIGHT*scale;
+        DashboardProfile profile=DashboardProfile.of(frameWidth,frameHeight);
         List<Box> out=new ArrayList<>();
-        for(Box box:occlusions())out.add(new Box((box.left()-dx)/scale,(box.top()-dy)/scale,(box.right()-dx)/scale,(box.bottom()-dy)/scale));
+        for(Box box:occlusions())out.add(profile.toReference(box));
         return out;
     }
     public String describe() {

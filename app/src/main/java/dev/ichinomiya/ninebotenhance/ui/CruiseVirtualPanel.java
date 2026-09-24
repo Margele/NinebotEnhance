@@ -54,8 +54,9 @@ public final class CruiseVirtualPanel {
         panel.setBackgroundColor(theme.surface); panel.setClickable(true); panel.setKeepScreenOn(true);
         panel.setElevation(dp(32));
         picture = new PreviewPicture(activity, request, frames);
-        toolbar = new PreviewToolbar(activity, theme, "仪表虚拟屏", picture, end, diagnostic, null, frames::dashboardDark, frames::toggleDashboardTheme,
-                () -> frames.touchBound() ? (frames.calibrating() ? "取消校准" : "校准") : null, () -> frames.toggleTouchCalibration(request));
+        // Mounted inside the host's page, the panel cannot turn the window: "横屏" turns the picture itself.
+        toolbar = new PreviewToolbar(activity, theme, "仪表虚拟屏", picture, diagnostic, picture::rotated, picture::toggleRotation, frames::dashboardDark, frames::toggleDashboardTheme,
+                frames::calibrationAction, () -> frames.toggleTouchCalibration(request), "结束", end);
         panel.addView(toolbar, new LinearLayout.LayoutParams(-1, -2));
         FrameLayout screen = new FrameLayout(activity);
         screen.addView(picture, new FrameLayout.LayoutParams(-1, -1));

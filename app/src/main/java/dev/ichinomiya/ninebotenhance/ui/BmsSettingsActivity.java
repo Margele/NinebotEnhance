@@ -57,10 +57,15 @@ public final class BmsSettingsActivity extends Activity {
         watcher=state->{if(!saving)status.setText(state.describe());};
         bms.watch(watcher);
     }
-    @Override protected void onResume(){super.onResume();refreshPermission();bms.hold(BmsController.SCREEN_HOLD_MS);bms.poll();}
+    /** The screen holds the link while visible, renewing every few seconds, and lets go when it leaves the screen. */
+    private final android.os.Handler ui=new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable renew=new Runnable(){@Override public void run(){bms.hold(BmsController.HOLD_SCREEN,BmsController.SCREEN_HOLD_MS);bms.poll();ui.postDelayed(this,BmsController.SCREEN_RENEW_MS);}};
+    @Override protected void onStart(){super.onStart();ui.removeCallbacks(renew);renew.run();}
+    @Override protected void onStop(){super.onStop();ui.removeCallbacks(renew);bms.release(BmsController.HOLD_SCREEN);}
+    @Override protected void onResume(){super.onResume();refreshPermission();}
     @Override protected void onDestroy(){super.onDestroy();if(watcher!=null)bms.unwatch(watcher);}
     @Override public void onRequestPermissionsResult(int code,String[] permissions,int[] results){
-        super.onRequestPermissionsResult(code,permissions,results);refreshPermission();bms.hold(BmsController.SCREEN_HOLD_MS);
+        super.onRequestPermissionsResult(code,permissions,results);refreshPermission();bms.hold(BmsController.HOLD_SCREEN,BmsController.SCREEN_HOLD_MS);
     }
     private void refreshPermission(){
         boolean connect=checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)==PackageManager.PERMISSION_GRANTED;
@@ -96,7 +101,7 @@ public final class BmsSettingsActivity extends Activity {
         if(address.isEmpty()){status.setText("蓝牙地址无效");return;}
         mac.setText(address);
         BmsSettings next=new BmsSettings(address,poll.getProgress()*BmsSettings.POLL_STEP_MS);
-        bms.save(next);bms.hold(BmsController.SCREEN_HOLD_MS);
+        bms.save(next);bms.hold(BmsController.HOLD_SCREEN,BmsController.SCREEN_HOLD_MS);
         saving=true;save.setEnabled(false);status.setText("正在连接");
         status.postDelayed(()->{
             if(isFinishing()||isDestroyed())return;

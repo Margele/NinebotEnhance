@@ -24,15 +24,18 @@ public final class PreviewPicture extends View {
     private BaseInputConnection activeConnection;
     private final java.util.Set<Integer> heldKeys = new java.util.HashSet<>();
     public Runnable onControlsChanged = () -> {};
-    public PreviewPicture(Context context, String request, FrameClient frames) {
-        super(context); this.request = request; this.frames = frames;
+    /** Whether the picture takes the "横屏" quarter turn itself; false where the whole window turns instead. */
+    private final boolean turns;
+    public PreviewPicture(Context context, String request, FrameClient frames) { this(context, request, frames, true); }
+    public PreviewPicture(Context context, String request, FrameClient frames, boolean turns) {
+        super(context); this.request = request; this.frames = frames; this.turns = turns;
         setContentDescription("虚拟屏画面，支持触摸操作");
         setOnGenericMotionListener((v, event) -> true);
     }
-    public boolean rotated() { return frames.previewRotated(request); }
+    public boolean rotated() { return turns && frames.previewRotated(request); }
     public boolean keyboardActive() { return keyboard; }
     public void toggleRotation() {
-        if (paused) return;
+        if (paused || !turns) return;
         cancelTouch(); frames.setPreviewRotated(request, !rotated()); invalidate(); onControlsChanged.run();
     }
     public void back() { cancelTouch(); if (frames.readyFor(request)) frames.back(request); }

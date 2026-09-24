@@ -14,11 +14,15 @@ public final class PreviewTransform {
     }
     private static int checkedHeight(int height,int inset){if(inset<0||inset>=height||(long)height+inset>Integer.MAX_VALUE)throw new IllegalArgumentException("Invalid top inset");return height+inset;}
     public PreviewTransform(DisplaySettings settings,int viewWidth,int viewHeight,boolean rotated){
-        this(settings.width,settings.height,settings.virtualWidth,settings.virtualHeight,viewWidth,viewHeight,rotated);
+        this(settings.width,settings.height,settings.virtualWidth,settings.virtualHeight,settings.contentTop(),viewWidth,viewHeight,rotated);
     }
     public PreviewTransform(int width,int frameHeight,int appWidth,int appHeight,int viewWidth,int viewHeight,boolean rotated){
-        if(appWidth<1||appHeight<1||appWidth>width||appHeight>frameHeight)throw new IllegalArgumentException("Invalid content rectangle");
-        topInset=frameHeight-appHeight;contentHeight=appHeight;contentWidth=appWidth;
+        this(width,frameHeight,appWidth,appHeight,frameHeight-appHeight,viewWidth,viewHeight,rotated);
+    }
+    /** {@code appTop} is the app's first row in the frame; rows above and below the app are background and never start a gesture. */
+    public PreviewTransform(int width,int frameHeight,int appWidth,int appHeight,int appTop,int viewWidth,int viewHeight,boolean rotated){
+        if(appWidth<1||appHeight<1||appWidth>width||appHeight>frameHeight||appTop<0||appTop+appHeight>frameHeight)throw new IllegalArgumentException("Invalid content rectangle");
+        topInset=appTop;contentHeight=appHeight;contentWidth=appWidth;
         fit = new TouchMapping(rotated ? frameHeight : width, rotated ? width : frameHeight, viewWidth, viewHeight);
         float s = fit.scale;
         input = rotated ? new float[]{0, s, -fit.top * s, -s, 0, frameHeight + fit.left * s, 0, 0, 1}

@@ -15,7 +15,8 @@ final class OverlayTests {
         check(typical.bitrateBps()==1500000&&typical.intervalMs()==50&&typical.overridesBitrate()&&typical.overridesFps(),"bitrate converts to bit/s and fps to the loop interval");
         check(typical.withFps(0).overridesBitrate()&&!typical.withFps(0).overridesFps()&&typical.withBitrate(0).withFps(0).equals(EncoderOverride.NONE.withPreviewStats(true)),"each override can be cleared on its own");
         EncoderOverride framed=new EncoderOverride(0,0,false,EncoderOverride.HALF_SCREEN_WIDTH,EncoderOverride.HALF_SCREEN_HEIGHT);
-        check(framed.overridesFrame()&&framed.halfScreen()&&!framed.fiveInch()&&!framed.active()&&framed.describe().endsWith("frame=240x320"),"the half-screen preset overrides only the composed frame");
+        check(framed.overridesFrame()&&framed.halfScreen()&&!framed.fiveInch()&&!framed.sevenInch()&&!framed.active()&&framed.describe().endsWith("frame=240x320"),"the half-screen preset overrides only the composed frame");
+        check(new EncoderOverride(0,0,false,EncoderOverride.SEVEN_INCH_WIDTH,EncoderOverride.SEVEN_INCH_HEIGHT).sevenInch()&&none.withFrame(1024,600).sevenInch()&&!none.withFrame(1024,608).sevenInch()&&none.withFrame(1024,600).describe().endsWith("frame=1024x600"),"the seven-inch preset is the 1024 x 600 frame");
         check(!none.overridesFrame()&&none.describe().endsWith("frame=配置")&&new EncoderOverride(0,0,false,240,0).equals(none)&&none.withFrame(848,480).fiveInch(),"a missing side means the configured frame");
         check(new EncoderOverride(0,0,false,100,5000).withFrame(101,321).frameWidth()==160&&new EncoderOverride(0,0,false,100,5000).frameHeight()==1920&&none.withFrame(101,321).frameHeight()==320,"custom frames clamp to 160-1920 and even sides");
         check(EncoderOverride.describeBitrate(1500).equals("1.50 Mbps")&&EncoderOverride.describeBitrate(800).equals("800 kbps"),"bitrate label switches units at 1 Mbps");

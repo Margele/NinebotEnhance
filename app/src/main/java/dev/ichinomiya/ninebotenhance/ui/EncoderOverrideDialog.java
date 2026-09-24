@@ -14,7 +14,7 @@ import dev.ichinomiya.ninebotenhance.core.SidebarLayout;
 
 /**
  * Overrides: preview statistics, encoder bitrate and frame rate, the composed frame size, the virtual display size and density
- * (shape defaults apply while unchecked), the two background colours, keep-DPI and compat scaling. Labels only, no explanatory copy.
+ * (shape defaults apply while unchecked), the two background colours and keep-DPI. Labels only, no explanatory copy.
  * The display part is saved with the display settings and needs an idle session; the encoder part applies at once.
  */
 public final class EncoderOverrideDialog {
@@ -38,19 +38,19 @@ public final class EncoderOverrideDialog {
         RadioGroup presets=new RadioGroup(activity);presets.setOrientation(RadioGroup.VERTICAL);
         RadioButton half=radio(activity,theme,presets,"半屏仪表 "+EncoderOverride.HALF_SCREEN_WIDTH+" × "+EncoderOverride.HALF_SCREEN_HEIGHT);
         RadioButton five=radio(activity,theme,presets,"五寸仪表 "+EncoderOverride.FIVE_INCH_WIDTH+" × "+EncoderOverride.FIVE_INCH_HEIGHT);
+        RadioButton seven=radio(activity,theme,presets,"七寸仪表 "+EncoderOverride.SEVEN_INCH_WIDTH+" × "+EncoderOverride.SEVEN_INCH_HEIGHT);
         RadioButton custom=radio(activity,theme,presets,"自定义");
         frameBlock.addView(presets,new LinearLayout.LayoutParams(-1,-2));
         LinearLayout customRow=new LinearLayout(activity);customRow.setGravity(Gravity.CENTER_VERTICAL);customRow.setPadding(0,gap,0,0);
         int width=current.overridesFrame()?current.frameWidth():frames.frameWidth(),height=current.overridesFrame()?current.frameHeight():frames.frameHeight();
         EditText widthField=field(activity,theme,customRow,"宽",width),heightField=field(activity,theme,customRow,"高",height);
         frameBlock.addView(customRow,new LinearLayout.LayoutParams(-1,-2));
-        boolean customSelected=current.overridesFrame()&&!current.halfScreen()&&!current.fiveInch();
-        (current.halfScreen()?half:current.fiveInch()?five:customSelected?custom:half).setChecked(true);
+        boolean customSelected=current.overridesFrame()&&!current.halfScreen()&&!current.fiveInch()&&!current.sevenInch();
+        (current.halfScreen()?half:current.fiveInch()?five:current.sevenInch()?seven:customSelected?custom:half).setChecked(true);
         customRow.setVisibility(customSelected?View.VISIBLE:View.GONE);
         presets.setOnCheckedChangeListener((g,id)->customRow.setVisibility(id==custom.getId()?View.VISIBLE:View.GONE));
-        // Virtual display: the shape defaults (five-inch 640 x 440, half-screen 240 x 300, both 160 DPI) unless overridden.
-        boolean portrait=SidebarLayout.halfScreen(frames.frameWidth(),frames.frameHeight());
-        int[] defaults=DisplaySettings.defaultVirtual(portrait);
+        // Virtual display: the frame profile's defaults (five-inch 640 x 440, half-screen 240 x 300, seven-inch 760 x 496, all 160 DPI) unless overridden.
+        int[] defaults=DisplaySettings.defaultVirtual(frames.frameWidth(),frames.frameHeight());
         CheckBox virtual=check(activity,theme,content,"覆盖虚拟屏",cached.virtualOverride);
         LinearLayout virtualBlock=block(activity,content,cached.virtualOverride);
         LinearLayout virtualRow=new LinearLayout(activity);virtualRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -61,14 +61,7 @@ public final class EncoderOverrideDialog {
         LinearLayout colours=new LinearLayout(activity);colours.setGravity(Gravity.CENTER_VERTICAL);colours.setPadding(0,gap,0,0);
         BandColorButton dark=colour(activity,theme,colours,"深色背景",cached.backgroundColor),light=colour(activity,theme,colours,"浅色背景",cached.lightBackgroundColor);
         content.addView(colours,new LinearLayout.LayoutParams(-1,-2));
-        LinearLayout dpiRow=new LinearLayout(activity);dpiRow.setGravity(Gravity.CENTER_VERTICAL);
-        CheckBox keepDpi=check(activity,theme,dpiRow,"保持 DPI",cached.keepPhoneDpi);
-        CheckBox compat=check(activity,theme,dpiRow,"兼容缩放",cached.compatScale||frames.compatScaleForced());
-        ((LinearLayout.LayoutParams)keepDpi.getLayoutParams()).width=0;((LinearLayout.LayoutParams)keepDpi.getLayoutParams()).weight=1;
-        ((LinearLayout.LayoutParams)compat.getLayoutParams()).width=0;((LinearLayout.LayoutParams)compat.getLayoutParams()).weight=1;
-        content.addView(dpiRow,new LinearLayout.LayoutParams(-1,-2));
-        Runnable compatSync=()->{boolean forced=frames.compatScaleForced();if(forced)compat.setChecked(true);compat.setEnabled(idle&&keepDpi.isChecked()&&!forced);};
-        keepDpi.setOnCheckedChangeListener((b,c)->compatSync.run());compatSync.run();
+        CheckBox keepDpi=check(activity,theme,content,"保持 DPI",cached.keepPhoneDpi);
         bitrate.setOnCheckedChangeListener((b,checked)->bitrateBlock.setVisibility(checked?View.VISIBLE:View.GONE));
         fps.setOnCheckedChangeListener((b,checked)->fpsBlock.setVisibility(checked?View.VISIBLE:View.GONE));
         frame.setOnCheckedChangeListener((b,checked)->frameBlock.setVisibility(checked?View.VISIBLE:View.GONE));
@@ -84,6 +77,7 @@ public final class EncoderOverrideDialog {
             if(frame.isChecked()){
                 if(half.isChecked()){frameWidth=EncoderOverride.HALF_SCREEN_WIDTH;frameHeight=EncoderOverride.HALF_SCREEN_HEIGHT;}
                 else if(five.isChecked()){frameWidth=EncoderOverride.FIVE_INCH_WIDTH;frameHeight=EncoderOverride.FIVE_INCH_HEIGHT;}
+                else if(seven.isChecked()){frameWidth=EncoderOverride.SEVEN_INCH_WIDTH;frameHeight=EncoderOverride.SEVEN_INCH_HEIGHT;}
                 else{frameWidth=number(widthField);frameHeight=number(heightField);}
             }
             frames.saveEncoderOverride(new EncoderOverride(bitrate.isChecked()?bitrateBar.getProgress()*STEP:0,fps.isChecked()?fpsBar.getProgress():0,preview.isChecked(),frameWidth,frameHeight));
@@ -92,7 +86,7 @@ public final class EncoderOverrideDialog {
             DisplaySettings next;
             try{
                 next=new DisplaySettings(base.width,base.height,over?number(virtualWidth):base.virtualWidth,over?number(virtualHeight):base.virtualHeight,over?number(dpi):base.dpi,
-                        dark.color(),keepDpi.isChecked(),light.color(),compat.isChecked()&&keepDpi.isChecked(),over);
+                        dark.color(),keepDpi.isChecked(),light.color(),over);
             }catch(IllegalArgumentException e){Toast.makeText(activity,e.getMessage(),Toast.LENGTH_LONG).show();return;}
             frames.saveSettings(next,frames.cachedApp(),error->{if(error!=null&&!activity.isDestroyed())Toast.makeText(activity,error,Toast.LENGTH_LONG).show();});
             dialog.dismiss();

@@ -2,62 +2,76 @@ package dev.ichinomiya.ninebotenhance.core;
 
 import dev.ichinomiya.ninebotenhance.ipc.Protocol;
 
-/** One user gesture. Vehicle checks precede display creation; stale callbacks cannot take ownership. */
+/**
+ * Two layers. The virtual display is started on its own or by the first cast and lives until it is closed or the host exits; a
+ * cast binds that display to the vehicle and lets go again without touching it. Vehicle checks precede the binding (and any
+ * display created for it); stale callbacks cannot take ownership of either layer.
+ */
 public final class DirectSession {
-    public enum Phase { IDLE, CHECKING_VEHICLE, CONSENT, WAITING_FRAMES, STARTING, RUNNING }
-    public enum Mode { VEHICLE, LOCAL }
-    private volatile Phase phase = Phase.IDLE;
-    private volatile String request;
-    private volatile Mode mode;
+    public enum Display { IDLE, STARTING, READY }
+    public enum Cast { IDLE, CHECKING_VEHICLE, WAITING_DISPLAY, STARTING, RUNNING }
+    private volatile Display display = Display.IDLE;
+    private volatile String displayRequest;
+    private volatile Cast cast = Cast.IDLE;
+    private volatile String castRequest;
     private Boolean vehiclePower;
     private boolean cruiseReady;
-    public boolean begin(String id) {
-        return begin(id, Mode.VEHICLE);
+    // ---------------------------------------------------------------- display layer
+    public synchronized boolean beginDisplay(String id) {
+        if (display != Display.IDLE || !Protocol.validRequest(id)) return false;
+        displayRequest = id; display = Display.STARTING; return true;
     }
-    public synchronized boolean begin(String id, Mode mode) {
-        if (phase != Phase.IDLE || !Protocol.validRequest(id) || mode == null) return false;
-        this.mode = mode; request = id; vehiclePower = null; cruiseReady = false;
-        phase = mode == Mode.VEHICLE ? Phase.CHECKING_VEHICLE : Phase.CONSENT; return true;
+    public boolean displayReady(String id) {
+        if (!ownsDisplay(id) || display != Display.STARTING) return false;
+        display = Display.READY; return true;
     }
-    public boolean matches(String id) { return request != null && request.equals(id); }
+    /** Closing the display also drops any cast bound to it. */
+    public synchronized boolean endDisplay(String id) {
+        if (!ownsDisplay(id)) return false;
+        displayRequest = null; display = Display.IDLE; castRequest = null; cast = Cast.IDLE; return true;
+    }
+    public boolean ownsDisplay(String id) { String current = displayRequest; return current != null && current.equals(id); }
+    public String displayRequest() { return displayRequest; }
+    public Display display() { return display; }
+    public boolean displayRunning() { return display != Display.IDLE; }
+    // ---------------------------------------------------------------- cast layer
+    public synchronized boolean beginCast(String id) {
+        if (cast != Cast.IDLE || !Protocol.validRequest(id)) return false;
+        castRequest = id; vehiclePower = null; cruiseReady = false; cast = Cast.CHECKING_VEHICLE; return true;
+    }
+    public boolean ownsCast(String id) { String current = castRequest; return current != null && current.equals(id); }
     /** Atomic phase/request snapshot for a query entering on a non-UI thread. */
-    public synchronized String vehicleCheckRequest() { return phase == Phase.CHECKING_VEHICLE ? request : null; }
+    public synchronized String vehicleCheckRequest() { return cast == Cast.CHECKING_VEHICLE ? castRequest : null; }
     public boolean powerChecked(String id, boolean on) {
-        if (!matches(id) || phase != Phase.CHECKING_VEHICLE) return false;
+        if (!ownsCast(id) || cast != Cast.CHECKING_VEHICLE) return false;
         // An observed rejection cannot be superseded by another concurrent query.
         if (!Boolean.FALSE.equals(vehiclePower)) vehiclePower = on;
         return true;
     }
     public boolean cruiseReady(String id) {
-        if (!matches(id) || phase != Phase.CHECKING_VEHICLE) return false;
+        if (!ownsCast(id) || cast != Cast.CHECKING_VEHICLE) return false;
         cruiseReady = true; return true;
     }
-    public boolean prepareDisplay(String id) {
-        if (!matches(id) || phase != Phase.CHECKING_VEHICLE || !Boolean.TRUE.equals(vehiclePower) || !cruiseReady) return false;
-        phase = Phase.CONSENT; return true;
+    /** Both prerequisites observed for this attempt: the cast may take, or start, the display. Succeeds exactly once. */
+    public boolean vehicleConfirmed(String id) {
+        if (!ownsCast(id) || cast != Cast.CHECKING_VEHICLE || !Boolean.TRUE.equals(vehiclePower) || !cruiseReady) return false;
+        cast = Cast.WAITING_DISPLAY; return true;
     }
-    public boolean granted(String id) {
-        if (!matches(id) || phase != Phase.CONSENT) return false;
-        phase = Phase.WAITING_FRAMES; return true;
-    }
+    /** The display is ready and its frames start going to the encoder. */
     public boolean launch(String id) {
-        if (!matches(id) || mode != Mode.VEHICLE || phase != Phase.WAITING_FRAMES) return false;
-        phase = Phase.STARTING; return true;
+        if (!ownsCast(id) || cast != Cast.WAITING_DISPLAY || display != Display.READY) return false;
+        cast = Cast.STARTING; return true;
     }
     public boolean running(String id) {
-        if (!matches(id) || mode != Mode.VEHICLE || phase != Phase.STARTING) return false;
-        phase = Phase.RUNNING; return true;
+        if (!ownsCast(id) || cast != Cast.STARTING) return false;
+        cast = Cast.RUNNING; return true;
     }
-    public boolean localReady(String id) {
-        if (!matches(id) || mode != Mode.LOCAL || phase != Phase.WAITING_FRAMES) return false;
-        phase = Phase.RUNNING; return true;
+    /** The cast lets go of the display, which stays as it is. */
+    public synchronized boolean endCast(String id) {
+        if (!ownsCast(id)) return false;
+        castRequest = null; cast = Cast.IDLE; return true;
     }
-    public synchronized boolean end(String id) {
-        if (!matches(id)) return false;
-        request = null; mode = null; phase = Phase.IDLE; return true;
-    }
-    public String request() { return request; }
-    public Phase phase() { return phase; }
-    public Mode mode() { return mode; }
-    public boolean isLocal() { return mode == Mode.LOCAL; }
+    public String castRequest() { return castRequest; }
+    public Cast cast() { return cast; }
+    public boolean casting() { return cast != Cast.IDLE; }
 }

@@ -98,7 +98,12 @@ public final class FrameBridgeService extends Service {
                             android.app.PendingIntent.FLAG_IMMUTABLE | android.app.PendingIntent.FLAG_CANCEL_CURRENT | android.app.PendingIntent.FLAG_ONE_SHOT, pickerOptions.toBundle()));
                     break;
                 }
-                case Protocol.READ: result = projectionSource ? projection.status() : session.status(); break;
+                case Protocol.UPDATE_CHECK: result = UpdateChecker.get(FrameBridgeService.this).snapshot(args.getBoolean("refresh")); break;
+                case Protocol.READ:
+                    result = projectionSource ? projection.status() : session.status();
+                    // The poll carries whether a Ninebot screen is visible; the lamp and BMS links follow it (see NotificationHub.hostVisible).
+                    dev.ichinomiya.ninebotenhance.notification.NotificationHub.hostVisible(FrameBridgeService.this, args.getBoolean("foreground"));
+                    break;
                 case Protocol.HUD_SNAPSHOT:
                     result = projectionSource ? projection.status() : session.status();
                     if (result.getBoolean("active") && args.getString(Protocol.REQUEST, "").equals(result.getString(Protocol.REQUEST)))

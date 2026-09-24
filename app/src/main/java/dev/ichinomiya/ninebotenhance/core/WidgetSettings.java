@@ -162,6 +162,7 @@ public record WidgetSettings(int mask,int tyreIntervalSeconds,int voltageInterva
     public boolean readsVoltage(){return enabled(VOLTAGE)||conditionsUse(WidgetCondition.VOLTAGE);}
     /** Speed and power are read for their own cards, for hill-hold detection and for conditions that check them. */
     public boolean readsSpeed(){return enabled(SPEED)||enabled(HILL_HOLD_DODGE)||conditionsUse(WidgetCondition.SPEED);}
+    /** The vehicle power register is read whenever anything needs it; hill hold always does, whatever the BMS priority option says. */
     public boolean readsPower(){return enabled(POWER)||enabled(HILL_HOLD_DODGE)||conditionsUse(WidgetCondition.POWER);}
     public long tyreLimitMs(){return tyreIntervalSeconds*1000L*TYRE_EXPIRY_FACTOR;}
     public long voltageLimitMs(){return (long)voltageIntervalMs*VOLTAGE_EXPIRY_FACTOR;}

@@ -5,7 +5,8 @@ package dev.ichinomiya.ninebotenhance.core;
  * comes from the device's 0x15 report, so the card and the volume stepper always work from the hoist's own value.
  */
 public record LampState(int phase,int position,int speed,int low,int high,String detail){
-    public static final int UNBOUND=0,DENIED=1,CONNECTING=2,AUTHENTICATING=3,READY=4,REJECTED=5,FAILED=6;
+    /** IDLE: bound, but nothing needs the link right now (Ninebot hidden, no session, no lamp screen), so it is closed. */
+    public static final int UNBOUND=0,DENIED=1,CONNECTING=2,AUTHENTICATING=3,READY=4,REJECTED=5,FAILED=6,IDLE=7;
     public static final LampState NONE=new LampState(UNBOUND,-1,-1,-1,-1,"");
     public LampState{
         position=clamp(position);speed=clamp(speed);low=clamp(low);high=clamp(high);
@@ -26,7 +27,7 @@ public record LampState(int phase,int position,int speed,int low,int high,String
     public String describe(){
         String name=switch(phase){
             case UNBOUND->"未绑定";case DENIED->"无蓝牙权限";case CONNECTING->"连接中";case AUTHENTICATING->"认证中";
-            case READY->"已连接";case REJECTED->"密码错误";default->"连接失败";
+            case READY->"已连接";case REJECTED->"密码错误";case IDLE->"未连接";default->"连接失败";
         };
         if(!knownPosition())return detail.isEmpty()?name:name+"："+detail;
         return name+" "+position+"%"+(low>=0&&high>=0?"，行程 "+low+"–"+high+"%":"");

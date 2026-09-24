@@ -69,10 +69,15 @@ public final class LampSettingsActivity extends Activity {
         watcher=state->{if(!saving)status.setText(describe(state));};
         lamp.watch(watcher);
     }
-    @Override protected void onResume(){super.onResume();refreshPermission();lamp.hold(LampController.SCREEN_HOLD_MS);}
+    /** The screen holds the link while visible, renewing every few seconds, and lets go when it leaves the screen. */
+    private final android.os.Handler ui=new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable renew=new Runnable(){@Override public void run(){lamp.hold(LampController.HOLD_SCREEN,LampController.SCREEN_HOLD_MS);ui.postDelayed(this,LampController.SCREEN_RENEW_MS);}};
+    @Override protected void onStart(){super.onStart();ui.removeCallbacks(renew);renew.run();}
+    @Override protected void onStop(){super.onStop();ui.removeCallbacks(renew);lamp.release(LampController.HOLD_SCREEN);}
+    @Override protected void onResume(){super.onResume();refreshPermission();}
     @Override protected void onDestroy(){super.onDestroy();if(watcher!=null)lamp.unwatch(watcher);}
     @Override public void onRequestPermissionsResult(int code,String[] permissions,int[] results){
-        super.onRequestPermissionsResult(code,permissions,results);refreshPermission();lamp.hold(LampController.SCREEN_HOLD_MS);
+        super.onRequestPermissionsResult(code,permissions,results);refreshPermission();lamp.hold(LampController.HOLD_SCREEN,LampController.SCREEN_HOLD_MS);
     }
     private void refreshPermission(){
         boolean connect=checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)==PackageManager.PERMISSION_GRANTED;
@@ -117,7 +122,7 @@ public final class LampSettingsActivity extends Activity {
         mac.setText(address);
         LampSettings next=new LampSettings(address,secret,LampSettings.DEFAULT_SPEED,steps.getProgress()+LampSettings.MIN_STEPS,
                 reversed.isChecked(),volumeControl.isChecked());
-        lamp.save(next);lamp.hold(LampController.SCREEN_HOLD_MS);
+        lamp.save(next);lamp.hold(LampController.HOLD_SCREEN,LampController.SCREEN_HOLD_MS);
         saving=true;save.setEnabled(false);status.setText("正在认证");
         // The device answers the handshake within a couple of seconds; report whatever the link reached by then.
         status.postDelayed(()->{

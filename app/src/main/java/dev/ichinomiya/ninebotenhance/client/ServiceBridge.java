@@ -56,7 +56,29 @@ public final class ServiceBridge {
             } catch (RuntimeException e) { log.accept("BRIDGE wake ping failed " + Ipc.error(e)); }
         }, "Enhance-Wake").start();
     }
-    private static String refused(String base) { return hyperOs() ? base + "\n" + AUTOSTART_HINT : base; }
+    /** A hide-app-list style tool applied to Ninebot makes the module package invisible to it, and then no bind can ever succeed. */
+    public static final String HIDDEN_HINT = "如果对九号出行启用了「隐藏应用列表」之类的功能，请把 Ninebot Enhance 加入例外后重试。";
+    public static final String HIDDEN_DETECTED = "九号出行当前查不到 Ninebot Enhance 这个应用，多半是「隐藏应用列表」之类的功能把它藏起来了，请加入例外后重试。";
+    private boolean hiddenReported;
+    /** Ninebot holds QUERY_ALL_PACKAGES, so a failed lookup of our own package means something is hiding it from the host. */
+    private boolean moduleVisible() {
+        Context c = context; if (c == null) return true;
+        try { c.getPackageManager().getPackageInfo(Protocol.MODULE, 0); return true; }
+        catch (android.content.pm.PackageManager.NameNotFoundException | RuntimeException e) {
+            if (!hiddenReported) { hiddenReported = true; log.accept("BRIDGE module package not visible to the host (" + e.getClass().getSimpleName() + "): a hide-app-list tool?"); }
+            return false;
+        }
+    }
+    /** Why a bind may be refused, most likely cause first: the module hidden from Ninebot, then the ROM's autostart gate. */
+    public String advice() {
+        boolean visible = moduleVisible();
+        StringBuilder text = new StringBuilder();
+        if (!visible) text.append(HIDDEN_DETECTED);
+        if (hyperOs()) { if (text.length() > 0) text.append('\n'); text.append(AUTOSTART_HINT); }
+        if (visible) { if (text.length() > 0) text.append('\n'); text.append(HIDDEN_HINT); }
+        return text.toString();
+    }
+    private String refused(String base) { return base + "\n" + advice(); }
     public void attach(Context context) {
         main.post(() -> { if (this.context != null) return; this.context = context; rotate(); main.postDelayed(health, 1000); });
     }

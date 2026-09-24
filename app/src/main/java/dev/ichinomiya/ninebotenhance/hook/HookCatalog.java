@@ -43,7 +43,7 @@ public final class HookCatalog {
     public static final String TYRE_PARSER="cn.ninebot.device.motor.thirdparts.TirePressureStateParser",DEVICE_MANAGER="cn.ninebot.device.DeviceManager";
     public static final String NAVI_MESSENGER="cn.ninebot.device.motor.navi.DashNaviDataMessenger",CRUISE_ACTIVITY="cn.ninebot.device.motor.navi.CruiseModeActivity";
     public static final String CAST_MANAGER="cn.ninebot.mapcapture.DeviceScreenCastManager",RTP_SENDER="cn.ninebot.mapcapture.NBBluetoothRtpSender";
-    public static final String NAVIGATION_CARD="layout_detail_navigation_card";
+    public static final String NAVIGATION_CARD="layout_detail_navigation_card",LOCATION_CARD="layout_detail_location_card";
     public static final List<Target> ALL=List.of(
         type(DEVICE,"蓝牙读取回复与指令分发"),
         method(DEVICE,"onResponse",new String[]{"*.NbFrame"},"所有蓝牙读取回复的必经点"),
@@ -77,10 +77,11 @@ public final class HookCatalog {
         type("cn.ninebot.capture.mpeg2.NbFFmpegFrameRecorder","FFmpeg 编码参数"),
         type("cn.ninebot.capture.CaptureClient","原采集入口"),
         type("cn.ninebot.capture.codec.BitmapToH264Encoder","原编码器"),
-        resource("layout",NAVIGATION_CARD,"投屏按钮所在卡片"),
+        resource("layout",NAVIGATION_CARD,"巡航入口所在卡片"),
+        resource("layout",LOCATION_CARD,"按钮行插入锚点"),
         resource("id","vMainContainer","卡片容器"),
         resource("id","ivCruise","原巡航按钮"),
-        resource("id","layoutHistory","按钮插入锚点"),
+        resource("id","layoutHistory","备用插入锚点"),
         resource("id","layoutNavigation","卡片结构校验"));
 
     /** Resolve every target; the class resolver may search several class loaders, the resource resolver returns 0 for unknown names. */

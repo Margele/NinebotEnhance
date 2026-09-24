@@ -17,13 +17,16 @@ import java.util.function.Consumer;
 /**
  * The module's own GATT link to one DL BMS protection board, in the module process on the module's own Bluetooth permissions.
  * Every connection starts with the FC00 key exchange (a fresh secp256k1 pair each time, the shared secret computed locally), after
- * which FC17 is polled at the configured interval while something holds the link (a cast session or the BMS screen). The board
- * drops idle links by itself, so a dropped link is simply reopened and the handshake repeated. Nothing is ever written to the
- * board but FC00 and FC17.
+ * which FC17 is polled at the configured interval while something holds the link (a cast session, a visible Ninebot screen or
+ * the BMS screen); once the last hold lapses the link is closed and nothing runs until the next hold. The board drops idle
+ * links by itself, so a dropped link is simply reopened and the handshake repeated. Nothing is ever written to the board but
+ * FC00 and FC17.
  */
 public final class BmsController {
-    public static final long HOLD_MS=6000,SCREEN_HOLD_MS=30000;
-    private static final long HANDSHAKE_TIMEOUT_MS=8000,RETRY_MS=5000,TICK_MS=1000,BACKGROUND_TICK_MS=15000,BACKGROUND_RETRY_MS=10000;
+    public static final long HOLD_MS=6000,SCREEN_HOLD_MS=15000,SCREEN_RENEW_MS=5000;
+    /** Who holds the link; the same three sources as the lamp. */
+    public static final int HOLD_SESSION=0,HOLD_FOREGROUND=1,HOLD_SCREEN=2;
+    private static final long HANDSHAKE_TIMEOUT_MS=8000,RETRY_MS=5000,TICK_MS=1000;
     private static final long WRITE_TIMEOUT_MS=2500,CHUNK_GAP_MS=30,BACKOFF_MAX_MS=60000;
     private static final int DEFAULT_MTU=23,REQUEST_MTU=247;
     private static BmsController instance;
@@ -38,15 +41,16 @@ public final class BmsController {
     private volatile BmsSettings settings;
     private volatile BmsState state=BmsState.NONE;
     private BluetoothGatt gatt;private BluetoothGattCharacteristic writeCharacteristic;
-    private boolean writing,ticking,directConnect;private int failures,mtu=DEFAULT_MTU,serial;
-    private long heldUntil,retryAt,lastDataAt;private int missedPolls;
+    private boolean writing,ticking,idle=true;private int failures,mtu=DEFAULT_MTU,serial;
+    private final long[] holds=new long[3];
+    private long retryAt,lastDataAt;private int missedPolls;
     private byte[] privateKey,key,iv;private byte[] inbound=new byte[512];private int inboundLength;
     private BmsController(Context context){
         this.context=context;main=new Handler(Looper.getMainLooper());
         HandlerThread thread=new HandlerThread("Ninebot-Bms",android.os.Process.THREAD_PRIORITY_BACKGROUND);thread.start();
         worker=new Handler(thread.getLooper());
         settings=read();
-        state=settings.bound()?BmsState.of(BmsState.CONNECTING,""):BmsState.NONE;
+        state=settings.bound()?BmsState.of(BmsState.IDLE,""):BmsState.NONE;
         worker.post(this::tick);
     }
     // ---------------------------------------------------------------- settings
@@ -68,11 +72,13 @@ public final class BmsController {
     public void watch(Consumer<BmsState> watcher){watchers.add(watcher);main.post(()->watcher.accept(state));}
     public void unwatch(Consumer<BmsState> watcher){watchers.remove(watcher);}
     // ---------------------------------------------------------------- lifetime
-    public void hold(long millis){
+    public void hold(int source,long millis){
         long until=SystemClock.elapsedRealtime()+Math.max(0,millis);
-        worker.post(()->{if(until>heldUntil)heldUntil=until;tick();});
+        worker.post(()->{if(until>holds[source])holds[source]=until;tick();});
     }
-    public void release(){worker.post(()->{heldUntil=0;tick();});}
+    public void release(int source){worker.post(()->{holds[source]=0;tick();});}
+    private long heldUntil(){long until=0;for(long value:holds)until=Math.max(until,value);return until;}
+    private boolean held(){return SystemClock.elapsedRealtime()<heldUntil();}
     private static void log(String message){android.util.Log.i(Protocol.TAG,"BMS "+message);}
     public boolean permitted(){return context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)==PackageManager.PERMISSION_GRANTED;}
     public boolean scanPermitted(){return context.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN)==PackageManager.PERMISSION_GRANTED;}
@@ -80,42 +86,50 @@ public final class BmsController {
         try{BluetoothManager manager=context.getSystemService(BluetoothManager.class);return manager==null?null:manager.getAdapter();}
         catch(RuntimeException e){return null;}
     }
+    /** The link exists exactly while someone holds it; the same lifetime as LampController.tick. */
     private void tick(){
-        long now=SystemClock.elapsedRealtime();boolean held=now<heldUntil;
+        long now=SystemClock.elapsedRealtime();
         BmsSettings current=settings;
-        if(!current.bound()){if(gatt!=null)close("");publish(BmsState.NONE);stopTicking();return;}
-        if(!permitted()){if(gatt!=null)close("");publish(BmsState.of(BmsState.DENIED,""));schedule(held);return;}
-        if(gatt!=null&&held&&!directConnect&&key==null){close("");retryAt=0;}
-        if(gatt==null&&now>=retryAt)open(current,held);
-        schedule(held);
+        if(!current.bound()){drop();publish(BmsState.NONE);stopTicking();return;}
+        if(now>=heldUntil()){
+            if(!idle){idle=true;log("released");}
+            drop();publish(BmsState.of(BmsState.IDLE,""));stopTicking();return;
+        }
+        if(idle){idle=false;retryAt=0;}
+        if(!permitted()){drop();publish(BmsState.of(BmsState.DENIED,""));schedule();return;}
+        if(gatt==null&&now>=retryAt)open(current);
+        schedule();
     }
     private void stopTicking(){ticking=false;worker.removeCallbacks(tickRunnable);}
-    private void schedule(boolean held){worker.removeCallbacks(tickRunnable);ticking=true;worker.postDelayed(tickRunnable,held?TICK_MS:BACKGROUND_TICK_MS);}
+    private void schedule(){worker.removeCallbacks(tickRunnable);ticking=true;worker.postDelayed(tickRunnable,TICK_MS);}
     private final Runnable tickRunnable=new Runnable(){@Override public void run(){ticking=false;tick();}};
-    private void open(BmsSettings current,boolean direct){
+    private void open(BmsSettings current){
         BluetoothAdapter adapter=adapter();
         if(adapter==null||!adapter.isEnabled()){publish(BmsState.of(BmsState.FAILED,"蓝牙未开启"));retryAt=SystemClock.elapsedRealtime()+RETRY_MS;return;}
         BluetoothDevice device;
         try{device=adapter.getRemoteDevice(current.mac());}
         catch(RuntimeException e){publish(BmsState.of(BmsState.FAILED,"地址无效"));return;}
-        queue.clear();writing=false;writeCharacteristic=null;directConnect=direct;key=iv=privateKey=null;inboundLength=0;mtu=DEFAULT_MTU;missedPolls=0;
+        queue.clear();writing=false;writeCharacteristic=null;key=iv=privateKey=null;inboundLength=0;mtu=DEFAULT_MTU;missedPolls=0;
         publish(state.withPhase(BmsState.CONNECTING,""));
-        try{gatt=device.connectGatt(context,!direct,callback,BluetoothDevice.TRANSPORT_LE);}
+        try{gatt=device.connectGatt(context,false,callback,BluetoothDevice.TRANSPORT_LE);}
         catch(RuntimeException e){gatt=null;publish(BmsState.of(BmsState.FAILED,error(e)));}
-        retryAt=SystemClock.elapsedRealtime()+(direct?RETRY_MS:BACKGROUND_RETRY_MS);
-        log("open "+(direct?"direct":"background")+" "+current.mac());
+        retryAt=SystemClock.elapsedRealtime()+RETRY_MS;
+        log("open "+current.mac());
     }
     private final Runnable handshakeTimeout=new Runnable(){@Override public void run(){
         if(gatt==null||key!=null)return;
         failures++;close("握手无应答");
         retryAt=SystemClock.elapsedRealtime()+Math.min(BACKOFF_MAX_MS,RETRY_MS*failures);
     }};
-    private void close(String detail){
+    private void drop(){
         worker.removeCallbacks(handshakeTimeout);worker.removeCallbacks(pollRunnable);worker.removeCallbacks(writeWatchdog);worker.removeCallbacks(chunkRunnable);
         BluetoothGatt open=gatt;gatt=null;writeCharacteristic=null;writing=false;queue.clear();key=iv=privateKey=null;inboundLength=0;pending=null;
         if(open!=null)try{open.disconnect();open.close();}catch(RuntimeException ignored){}
+    }
+    private void close(String detail){
+        drop();
         if(!detail.isEmpty())publish(BmsState.of(BmsState.FAILED,detail));
-        else if(state.phase()!=BmsState.UNBOUND)publish(BmsState.of(BmsState.CONNECTING,""));
+        else if(state.phase()!=BmsState.UNBOUND&&state.phase()!=BmsState.IDLE)publish(BmsState.of(BmsState.CONNECTING,""));
     }
     private void publish(BmsState next){
         if(next.equals(state))return;
@@ -154,7 +168,7 @@ public final class BmsController {
         if(lastDataAt>0&&now-lastDataAt>settings.pollMs()*3L+2000){missedPolls++;log("no data for "+missedPolls+" polls");}
         if(missedPolls>=3){close("读取无应答");retryAt=0;return;}
         send(DlBmsProtocol.FC_DATA,new byte[0]);
-        if(now<heldUntil)worker.postDelayed(this,settings.pollMs());
+        if(held())worker.postDelayed(this,settings.pollMs());
     }};
     // ---------------------------------------------------------------- GATT
     private final BluetoothGattCallback callback=new BluetoothGattCallback(){

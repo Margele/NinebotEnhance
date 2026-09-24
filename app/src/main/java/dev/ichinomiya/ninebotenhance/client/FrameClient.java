@@ -48,6 +48,7 @@ import dev.ichinomiya.ninebotenhance.diagnostics.StreamOverlay;
 import dev.ichinomiya.ninebotenhance.core.EncoderOverride;
 import dev.ichinomiya.ninebotenhance.core.BmsCard;
 import dev.ichinomiya.ninebotenhance.core.DashboardLayout;
+import dev.ichinomiya.ninebotenhance.core.DashboardProfile;
 import dev.ichinomiya.ninebotenhance.core.HiddenFeatures;
 import dev.ichinomiya.ninebotenhance.diagnostics.EncodingDiagnostics;
 
@@ -113,7 +114,9 @@ public final class FrameClient {
     private volatile String brokerStatus = "尚未取得模块会话状态";
     private volatile boolean active, displayReady;
     private volatile boolean previewRotated;
-    private volatile DirectSession.Mode mode;
+    /** A cast is bound to the running display: its frames go to the capture hooks and the dashboard senders run. */
+    private volatile boolean casting;
+    private volatile String castRequest;
     private volatile long lastPoll;
     private volatile DisplaySettings settings = DisplaySettings.defaults();
     private ImageReader reader;
@@ -132,12 +135,15 @@ public final class FrameClient {
     private final Paint targetText = new Paint(Paint.ANTI_ALIAS_FLAG), targetHalo = new Paint(Paint.ANTI_ALIAS_FLAG);
     { markFill.setColor(Color.WHITE); markRing.setColor(Color.WHITE); markRing.setStyle(Paint.Style.STROKE); markOutline.setColor(Color.BLACK); markOutline.setStyle(Paint.Style.STROKE);
       targetText.setColor(Color.WHITE); targetHalo.setColor(Color.BLACK); targetHalo.setStyle(Paint.Style.STROKE); }
-    /** The module reports whether a touch panel is bound; calibration runs from the preview toolbar while a session is live. */
-    private volatile boolean touchBound, calibrating;
+    /** The module reports whether a touch panel is bound and whether the daemon has it open right now; calibration runs from the preview toolbar while a session is live. */
+    private volatile boolean touchBound, touchPresent, calibrating;
     private int calibrationStep;
     private final float[][] calibrationRaw = new float[dev.ichinomiya.ninebotenhance.core.TouchCalibration.TARGETS.length][];
     public boolean touchBound() { return touchBound; }
+    public boolean touchPresent() { return touchPresent; }
     public boolean calibrating() { return calibrating; }
+    /** The preview toolbar's calibration button: "取消校准" while a run is on, "校准" while the panel is present, nothing otherwise. */
+    public String calibrationAction() { return calibrating ? "取消校准" : touchPresent ? "校准" : null; }
     /** Preview toolbar: start tapping the frame's targets on the panel, or abandon the run. */
     public void toggleTouchCalibration(String request) {
         if (!request.equals(ownerRequest) || !touchBound) return;
@@ -234,7 +240,6 @@ public final class FrameClient {
                 savedSettings = DisplaySettings.read(p::getInt);
                 savedApp = p.getString(AppCatalog.SELECTED, "");
                 savedPrivilege = PrivilegeMode.parse(p.getString("privilege_mode", "AUTO"));
-                compatScaleForced = p.getInt("compat_scale_forced", 0) != 0;
             } catch (RuntimeException e) { report("SETTINGS cache " + Ipc.error(e)); }
             // Developer options live for one run of the host: the version taps, calibration, register probe and navigation test
             // all start hidden and off, whatever an earlier run left behind.
@@ -269,6 +274,8 @@ public final class FrameClient {
     public int frameHeight() { EncoderOverride o = encoderOverride; return o.overridesFrame() ? o.frameHeight() : dashboardLayout.frameHeight(); }
     /** Portrait frames (half-screen dashboards) take the single-column HUD layout without dodge or dashboard occlusions. */
     public boolean halfScreen() { return dev.ichinomiya.ninebotenhance.core.SidebarLayout.halfScreen(frameWidth(), frameHeight()); }
+    /** The frame's dashboard profile has a measured hill-hold toast to dodge; half-screen and seven-inch frames do not. */
+    public boolean hillHoldSupported() { return DashboardProfile.of(frameWidth(), frameHeight()).hillHold(); }
     /** Ninebot caches the TFT board's configuration as {@code <SN>_screen_cast_config.nb} in its external files directory; read-only here. */
     private void loadDashboardLayout(String vehicle) {
         if (context == null || vehicle == null || vehicle.isEmpty()) return;
@@ -280,7 +287,7 @@ public final class FrameClient {
             boolean changed = !parsed.equals(dashboardLayout) || !vehicle.equals(layoutVehicle);
             dashboardLayout = parsed; layoutVehicle = vehicle; hud.setOcclusions(parsed.referenceOcclusions());
             if (changed) {
-                report("LAYOUT " + parsed.describe() + (dev.ichinomiya.ninebotenhance.core.SidebarLayout.halfScreen(parsed.frameWidth(), parsed.frameHeight()) ? " layout=half-screen" : "")
+                report("LAYOUT " + parsed.describe() + " profile=" + DashboardProfile.of(parsed.frameWidth(), parsed.frameHeight()).describe() + (dev.ichinomiya.ninebotenhance.core.SidebarLayout.halfScreen(parsed.frameWidth(), parsed.frameHeight()) ? " layout=half-screen" : "")
                         + (dev.ichinomiya.ninebotenhance.core.SidebarLayout.fits(parsed.frameWidth(), parsed.frameHeight()) ? "" : " cards=hidden (frame below " + Math.round(dev.ichinomiya.ninebotenhance.core.SidebarLayout.MIN_FIT * 100) + "% of the reference)"));
                 View preview = inlinePreview.get(); if (preview != null) preview.postInvalidateOnAnimation();
             }
@@ -318,17 +325,13 @@ public final class FrameClient {
         if(context!=null)context.getSharedPreferences(Protocol.MODULE+".widgets",Context.MODE_PRIVATE).edit().putBoolean(dev.ichinomiya.ninebotenhance.core.OpenSourceNotice.KEY,true).apply();
         report("NOTICE accepted");
     }
-    /** Preview helper: one synthetic notification card rendered locally, independent of the phone mailbox. */
-    private int marks;
-    /** Also a timestamp marker for register probing: tap it right after each action on the vehicle and read the MARK lines back in the log. */
-    public void simulateNotification() { hud.simulate(SystemClock.elapsedRealtime()); report("MARK " + (++marks)); View preview = inlinePreview.get(); if (preview != null) preview.postInvalidateOnAnimation(); }
     public WidgetSettings widgetSettings(){return widgets;}
     public boolean dashboardDark(){return dashboardDark;}
     public void toggleDashboardTheme(){
         boolean dark=!dashboardDark;dashboardDark=dark;hud.setDark(dark);
         if(context!=null)context.getSharedPreferences(Protocol.MODULE+".widgets",Context.MODE_PRIVATE).edit().putBoolean("dashboard_dark",dark).apply();
         report("THEME "+(dark?"dark":"light"));
-        if(mode==DirectSession.Mode.VEHICLE)themeSender.accept(battery.selectedKey(),dark);
+        if(casting)themeSender.accept(battery.selectedKey(),dark);
         View preview=inlinePreview.get();if(preview!=null)preview.postInvalidateOnAnimation();
     }
     /** Forced encoder bitrate / frame rate and the preview statistics switch; applied by the encoding hooks. */
@@ -387,23 +390,51 @@ public final class FrameClient {
         editor.apply();
         widgets=settings;hud.setWidgets(settings);View preview=inlinePreview.get();if(preview!=null)preview.postInvalidateOnAnimation();
     }
-    public void beginSessionObservations(String request, DirectSession.Mode mode) {
+    /** A cast attempt opens its encoding diagnostics before the vehicle check, so the cruise start is captured. */
+    public void beginCastObservations(String castRequest) {
         synchronized (observationLock) {
-            if (request.equals(observedRequest)) return;
-            observedRequest = request;
+            if (castRequest.equals(observedRequest)) return;
+            observedRequest = castRequest;
             streamStats = new StreamStats(SystemClock.elapsedRealtime());
-            encoding.begin(request, mode == DirectSession.Mode.VEHICLE, SystemClock.elapsedRealtime());
+            encoding.begin(castRequest, true, SystemClock.elapsedRealtime());
         }
     }
-    public void startDirect(String request, DirectSession.Mode mode, Consumer<String> done) {
-        startDirect(request, mode, null, done);
+    private void endCastObservations(String castRequest) {
+        synchronized (observationLock) {
+            if (!castRequest.equals(observedRequest)) return;
+            encoding.stop(castRequest, SystemClock.elapsedRealtime(), statistics());
+            if (streamStats != null) streamStats.stop(SystemClock.elapsedRealtime());
+        }
     }
-    public void startDirect(String request, DirectSession.Mode mode, Activity activity, Consumer<String> done) {
-        beginSessionObservations(request, mode);
-        this.mode = mode;
+    /** Binds a cast to the running display: from now on the capture hooks get its frames and the dashboard senders run. */
+    public boolean attachCast(String displayRequest, String castRequest) {
+        synchronized (frameLock) {
+            if (!displayRequest.equals(ownerRequest) || !active) return false;
+            this.castRequest = castRequest; casting = true;
+        }
+        // The vehicle being cast is pinned now, not when the display was started.
+        tires.beginSession(); battery.beginSession();
+        report("CAST attached " + castRequest + " to display " + displayRequest);
+        View preview = inlinePreview.get(); if (preview != null) preview.postInvalidateOnAnimation();
+        return true;
+    }
+    /** The cast lets go; the display and its frames continue for the phone preview. */
+    public void detachCast(String castRequest) {
+        boolean owned;
+        synchronized (frameLock) { owned = castRequest.equals(this.castRequest); if (owned) { casting = false; this.castRequest = null; } }
+        endCastObservations(castRequest);
+        if (!owned) return;
+        themeSender.accept("", null); naviTestStop.run();
+        report("CAST detached " + castRequest);
+        View preview = inlinePreview.get(); if (preview != null) preview.postInvalidateOnAnimation();
+    }
+    public boolean casting() { return casting; }
+    public void startDirect(String request, Consumer<String> done) { startDirect(request, null, done); }
+    /** Starts the display session; {@code activity} hosts the recording consent in recording mode and is otherwise unused. */
+    public void startDirect(String request, Activity activity, Consumer<String> done) {
         tires.beginSession(); battery.beginSession(); hud.reset(request); probe.clear(); ride.clear(); hud.acceptTires(tires.snapshot()); hud.acceptBattery(battery.snapshot());
         touchMarks.clear(); synchronized (touchMarks) { calibrating = false; calibrationStep = 0; }
-        ownerRequest = request; active = true; displayReady = false; previewRotated = false; state = "正在连接虚拟屏";
+        ownerRequest = request; active = true; displayReady = false; previewRotated = false; touchPresent = false; state = "正在连接虚拟屏";
         appRecovery = AppRecoveryState.HIDDEN; appRecoveryDetail = "";
         beginAccepted = null; lastPoll = 0; bridge.ensure();
         AtomicBoolean completed = new AtomicBoolean();
@@ -425,19 +456,19 @@ public final class FrameClient {
                     DisplaySettings value = Ipc.settings(config); String selected = config.getString(AppCatalog.SELECTED, "");
                     savedPrivilege = PrivilegeMode.parse(config.getString("privilege_mode", "AUTO"));
                     screenCapture = !savedPrivilege.usesVirtualDisplay();
-                    if (screenCapture && (mode != DirectSession.Mode.VEHICLE || activity == null))
+                    if (screenCapture && activity == null)
                         throw new IllegalArgumentException("录屏模式只用于车辆投屏");
                     if (!screenCapture && selected.isEmpty()) throw new IllegalArgumentException("请先在设置中选择启动应用并保存");
                     if (completed.get() || !request.equals(ownerRequest)) return;
                     loadDashboardLayout(battery.selectedKey());
                     settings = value.withFrame(frameWidth(), frameHeight()); cacheSettings(value, selected); closeFrames();
                     if (settings != value) report("LAYOUT frame " + settings.width + "x" + settings.height + " from the cast configuration");
-                    if (compatScaleForced && settings.keepPhoneDpi && !settings.compatScale) settings = settings.withCompatScale(true);
-                    compatPlan = null;
+                    renderPlan = null;
                     int width = settings.virtualWidth, height = settings.virtualHeight;
-                    if (!screenCapture && settings.keepPhoneDpi && settings.compatScale) {
+                    if (!screenCapture && settings.keepPhoneDpi) {
+                        // Keep-DPI: the display is created at the phone's density and the plan's logical size; the capture path scales it back.
                         DisplaySettings.RenderPlan plan = settings.renderPlan(phoneDensityDpi());
-                        if (plan != null) { compatPlan = plan; width = plan.width(); height = plan.height(); report("RENDER compat plan " + width + "x" + height + "@" + plan.dpi() + " scaled into " + settings.virtualWidth + "x" + settings.virtualHeight); }
+                        if (plan != null) { renderPlan = plan; width = plan.width(); height = plan.height(); report("RENDER plan " + width + "x" + height + "@" + plan.dpi() + " scaled into " + settings.virtualWidth + "x" + settings.virtualHeight); }
                     }
                     if (screenCapture) {
                         Rect bounds = activity.getSystemService(android.view.WindowManager.class).getMaximumWindowMetrics().getBounds();
@@ -454,9 +485,9 @@ public final class FrameClient {
                     if (completed.get() || !request.equals(ownerRequest)) { closeFrames(); return; }
                     Bundle args = Ipc.request(request); Ipc.settings(args, settings); args.putParcelable("surface", surface); args.putBinder("owner", owner);
                     args.putString(AppCatalog.SELECTED, selected);
-                    args.putBoolean(Protocol.SCREEN_CAPTURE, screenCapture); args.putBoolean("local", mode == DirectSession.Mode.LOCAL);
+                    args.putBoolean(Protocol.SCREEN_CAPTURE, screenCapture);
                     args.putInt(Protocol.CAPTURE_WIDTH, width); args.putInt(Protocol.CAPTURE_HEIGHT, height);
-                    if (compatPlan != null) args.putInt("render_dpi", compatPlan.dpi());
+                    if (renderPlan != null) args.putInt("render_dpi", renderPlan.dpi());
                     Bundle status = bridge.call(Protocol.BEGIN, args);
                     if (completed.get() || !request.equals(ownerRequest)) { stopDirect(request); return; }
                     beginAccepted = request; acceptStatus(request, status);
@@ -506,9 +537,9 @@ public final class FrameClient {
             int width=source.getWidth(),height=source.getHeight();
             int frameWidth=screenCapture?width:settings.width,frameHeight=screenCapture?height:settings.height;
             Bitmap bitmap;
-            if (compatPlan != null && !screenCapture) bitmap = composeScaled(plane, width, height, frameWidth, frameHeight);
+            if (renderPlan != null && !screenCapture) bitmap = composeScaled(plane, width, height, frameWidth, frameHeight);
             else {
-                PixelPacking.compose(plane.getBuffer(),plane.getRowStride(),plane.getPixelStride(),width,height,packed,frameWidth,frameHeight,settings.background(dashboardDark),!screenCapture&&settings.keepPhoneDpi);
+                PixelPacking.compose(plane.getBuffer(),plane.getRowStride(),plane.getPixelStride(),width,height,packed,frameWidth,frameHeight,frameHeight-settings.bottomInset-height,settings.background(dashboardDark),false);
                 bitmap = Bitmap.createBitmap(frameWidth,frameHeight,Bitmap.Config.ARGB_8888); bitmap.copyPixelsFromBuffer(packed);
             }
             bitmap.setDensity(Bitmap.DENSITY_NONE);
@@ -527,7 +558,7 @@ public final class FrameClient {
     public void detachInline(View view) { if (inlinePreview.get() == view) inlinePreview.clear(); }
     public DisplaySettings displaySettings() { return settings; }
     public StreamStats.Snapshot statistics() { StreamStats value=streamStats;return value==null?null:value.snapshot(SystemClock.elapsedRealtime()); }
-    public StreamStats transportStats() { return ready() && mode==DirectSession.Mode.VEHICLE ? streamStats : null; }
+    public StreamStats transportStats() { return ready() && casting ? streamStats : null; }
     public boolean previewRotated(String request) { return request.equals(ownerRequest) && previewRotated; }
     public void setPreviewRotated(String request, boolean value) { if (request.equals(ownerRequest)) previewRotated = value; }
     public void drawInline(String request, Canvas canvas, int width, int height, boolean rotated) {
@@ -544,9 +575,8 @@ public final class FrameClient {
             hud.draw(canvas, Math.round(r[2]-r[0]), Math.round(r[3]-r[1]), SystemClock.elapsedRealtime());
             drawTouchMarks(canvas, Math.round(r[2]-r[0]), SystemClock.elapsedRealtime());
             drawCalibrationTarget(canvas, Math.round(r[2]-r[0]), Math.round(r[3]-r[1]));
-            // The local simulation shows, on top of everything, what the vehicle dashboard itself paints over the frame.
-            DirectSession.Mode current = mode;
-            if (current != null && current != DirectSession.Mode.VEHICLE && !dev.ichinomiya.ninebotenhance.core.SidebarLayout.halfScreen(Math.round(r[2]-r[0]), Math.round(r[3]-r[1]))) dev.ichinomiya.ninebotenhance.notification.DashboardOcclusion.draw(canvas, Math.round(r[2]-r[0]), Math.round(r[3]-r[1]), hud.hillHold(SystemClock.elapsedRealtime()), hud.occlusions());
+            // Without a cast the preview shows, on top of everything, what the vehicle dashboard itself paints over the frame.
+            if (!casting && !dev.ichinomiya.ninebotenhance.core.SidebarLayout.halfScreen(Math.round(r[2]-r[0]), Math.round(r[3]-r[1]))) dev.ichinomiya.ninebotenhance.notification.DashboardOcclusion.draw(canvas, Math.round(r[2]-r[0]), Math.round(r[3]-r[1]), hud.hillHold(SystemClock.elapsedRealtime()), hud.occlusions());
             canvas.restoreToCount(overlaySave);
             if (encoderOverride.previewStats()) drawStatistics(canvas, r[0], r[1]);
         }
@@ -555,8 +585,7 @@ public final class FrameClient {
     }
     /** Phone-only statistics panel at the top-left of the picture; drawn after the HUD so it never enters an encoded frame. */
     private void drawStatistics(Canvas canvas, float left, float top) {
-        DirectSession.Mode current = mode;
-        java.util.List<String> lines = StreamOverlay.lines(statistics(), targetFps(), current == DirectSession.Mode.VEHICLE);
+        java.util.List<String> lines = StreamOverlay.lines(statistics(), targetFps(), casting);
         float density = context == null ? 2.5f : context.getResources().getDisplayMetrics().density;
         overlayText.setColor(Color.WHITE); overlayText.setTextSize(11 * density); overlayBack.setColor(0xA0000000);
         float pad = 5 * density, lineHeight = overlayText.getFontSpacing(), width = 0;
@@ -623,12 +652,22 @@ public final class FrameClient {
         synchronized (frameLock) { latest = null; calibration = null; lastImage = 0; supplied.clear(); }
         View preview = inlinePreview.get(); if (preview != null) preview.postInvalidateOnAnimation();
     }
+    /** Whether one of the host's screens is visible; the module holds its lamp and BMS links only while it is or a session runs. */
+    private volatile boolean hostVisible;
+    public void setHostVisible(boolean visible) {
+        if (hostVisible == visible) return;
+        hostVisible = visible; report("HOST " + (visible ? "visible" : "hidden"));
+        if (context == null) return;
+        // Tell the module now rather than on the next scheduled poll; running it on the worker keeps a single poll loop.
+        worker.post(() -> { worker.removeCallbacks(poll); poll.run(); });
+    }
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             synchronized (observationLock) { encoding.tick(SystemClock.elapsedRealtime(), statistics()); }
             try {
                 if (bridge.connected()) {
-                    Bundle status = bridge.call(Protocol.READ, new Bundle());
+                    Bundle args = new Bundle(); args.putBoolean("foreground", hostVisible);
+                    Bundle status = bridge.call(Protocol.READ, args);
                     observeBroker(status);
                     String request = ownerRequest;
                     if (request != null && request.equals(beginAccepted)) {
@@ -649,7 +688,8 @@ public final class FrameClient {
                     }
                 } else { bridge.ensure(); if (ownerRequest != null) state = "服务暂时断开，正在自动重连"; }
             } catch (Exception e) { state = "模块连接异常：" + Ipc.error(e); report(state); }
-            worker.postDelayed(this, active ? 300 : 1000);
+            // Hidden and idle, the host has nothing to learn from the module every second; a visibility change polls at once.
+            worker.postDelayed(this, active ? 300 : hostVisible ? 1000 : 3000);
         }
     };
     private void acceptStatus(String request, Bundle status) {
@@ -663,11 +703,10 @@ public final class FrameClient {
         if (request.equals(status.getString(Protocol.REQUEST))) {
             active = status.getBoolean("active"); displayReady = status.getBoolean("ready"); state = status.getString("state", "");
             appRecovery = status.getInt(Protocol.APP_RECOVERY); appRecoveryDetail = status.getString(Protocol.APP_RECOVERY_DETAIL, "");
-            touchBound = status.getBoolean("touch_bound");
-            if (status.getBoolean("render_fallback")) forceCompatScale();
+            touchBound = status.getBoolean("touch_bound"); touchPresent = status.getBoolean("touch_present");
         } else {
             active = displayReady = false; state = "模块服务已重启或会话已失效，请重新开始投屏";
-            appRecovery = AppRecoveryState.HIDDEN; appRecoveryDetail = ""; touchBound = false;
+            appRecovery = AppRecoveryState.HIDDEN; appRecoveryDetail = ""; touchBound = touchPresent = false;
             report("BRIDGE requested session absent after reconnect");
         }
         lastPoll = SystemClock.elapsedRealtime();
@@ -682,13 +721,13 @@ public final class FrameClient {
                 hud.acceptProbe(current.enabled(WidgetSettings.REGISTER_PROBE) ? probe.snapshot(probeSelection, probeRawModules) : null);
                 hud.acceptRide(ride.snapshot());
                 // Local simulation reads too when the vehicle happens to be connected, so reads can be checked without casting.
-                if (mode != null && (current.readsTyres() || current.readsVoltage() || current.readsSpeed() || current.readsPower() || current.enabled(WidgetSettings.REGISTER_PROBE))) vehiclePulse.accept(battery.selectedKey(), current);
+                if ((current.readsTyres() || current.readsVoltage() || current.readsSpeed() || current.readsPower() || current.enabled(WidgetSettings.REGISTER_PROBE))) vehiclePulse.accept(battery.selectedKey(), current);
                 else vehicleStop.run();
-                if (mode == DirectSession.Mode.VEHICLE) themeSender.accept(battery.selectedKey(), dashboardDark);
-                if (mode == DirectSession.Mode.VEHICLE && naviTest) naviTestPulse.accept(battery.selectedKey());
+                if (casting) themeSender.accept(battery.selectedKey(), dashboardDark);
+                if (casting && naviTest) naviTestPulse.accept(battery.selectedKey());
                 else {
                     NaviUpdate live = liveNavi;
-                    if (mode == DirectSession.Mode.VEHICLE && naviLive && live != null && live.fresh(SystemClock.elapsedRealtime())) naviLivePulse.accept(battery.selectedKey(), live);
+                    if (casting && naviLive && live != null && live.fresh(SystemClock.elapsedRealtime())) naviLivePulse.accept(battery.selectedKey(), live);
                     else naviTestStop.run();
                 }
             } else { vehicleStop.run(); naviTestStop.run(); }
@@ -754,6 +793,15 @@ public final class FrameClient {
     public String status() { return bridge.status() + "\n" + state + "\n" + summary; }
     public boolean serviceConnected() { return bridge.connected(); }
     public String serviceStatus() { return bridge.status(); }
+    public String serviceAdvice() { return bridge.advice(); }
+    /** The module's cached GitHub release lookup; {@code refresh} asks it to look again now. */
+    public void checkUpdate(boolean refresh, Consumer<Bundle> done, Consumer<String> failed) {
+        Bundle args = new Bundle(); args.putBoolean("refresh", refresh);
+        metadataCall(Protocol.UPDATE_CHECK, args, done, failed);
+    }
+    /** The release version the user chose not to be asked about again. */
+    public String ignoredUpdate() { return context == null ? "" : context.getSharedPreferences(Protocol.MODULE + ".widgets", Context.MODE_PRIVATE).getString("update_ignored", ""); }
+    public void ignoreUpdate(String version) { if (context != null) context.getSharedPreferences(Protocol.MODULE + ".widgets", Context.MODE_PRIVATE).edit().putString("update_ignored", version).apply(); }
     public long replacementCount() { synchronized (frameLock) { return replacements; } }
     public boolean readyFor(String request) { synchronized (frameLock) { return request.equals(ownerRequest) && ready(); } }
     public boolean captureActiveFor(String request) { return request.equals(ownerRequest) && active && SystemClock.elapsedRealtime() - lastPoll < 4000; }
@@ -768,7 +816,7 @@ public final class FrameClient {
         }
         if (request == null) return;
         boolean owns = request.equals(ownerRequest);
-        if (owns) { ownerRequest = null; beginAccepted = null; active = displayReady = false; mode = null; tires.endSession(); battery.endSession(); hud.reset(); vehicleStop.run(); naviTestStop.run(); themeSender.accept("", null); }
+        if (owns) { ownerRequest = null; beginAccepted = null; active = displayReady = false; casting = false; castRequest = null; tires.endSession(); battery.endSession(); hud.reset(); vehicleStop.run(); naviTestStop.run(); themeSender.accept("", null); }
         pendingStops.add(request); bridge.ensure(); controlWorker.post(this::flushStops);
         worker.post(() -> { if (owns && ownerRequest == null) closeFrames(); });
     }
@@ -785,7 +833,7 @@ public final class FrameClient {
     }
     public boolean draw(Canvas canvas, int width, int height) {
         synchronized (frameLock) {
-            if (mode != DirectSession.Mode.VEHICLE || !ready() || width < 1 || height < 1 || (long)width * height > 4096L * 2160) return false;
+            if (!casting || !ready() || width < 1 || height < 1 || (long)width * height > 4096L * 2160) return false;
             boolean debug = debugMode.enabled();
             Bitmap picture = debug ? calibrationFrame() : latest;
             float[] r = debug ? new float[]{0, 0, width, height} : Geometry.fit(picture.getWidth(), picture.getHeight(), width, height);
@@ -799,7 +847,7 @@ public final class FrameClient {
     }
     public Bitmap replacement(int width, int height, int density, boolean early) {
         synchronized (frameLock) {
-            if (mode != DirectSession.Mode.VEHICLE || !ready() || width <= 0 || height <= 0 || (long)width * height > 4096L * 2160) return null;
+            if (!casting || !ready() || width <= 0 || height <= 0 || (long)width * height > 4096L * 2160) return null;
             Bitmap output = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888); output.setDensity(density);
             if (!draw(new Canvas(output), width, height)) { output.recycle(); return null; }
             supplied.put(output, stamp()); if (early) earlyFrames++;
@@ -808,7 +856,7 @@ public final class FrameClient {
     }
     public Bitmap replace(Bitmap original) {
         synchronized (frameLock) {
-            if (mode != DirectSession.Mode.VEHICLE || original == null || original.isRecycled() || !ready()) return null;
+            if (!casting || original == null || original.isRecycled() || !ready()) return null;
             if (stamp().equals(supplied.get(original))) { deduplicated++; return original; }
             return replacement(original.getWidth(), original.getHeight(), original.getDensity(), false);
         }
@@ -927,35 +975,26 @@ public final class FrameClient {
     public PrivilegeMode cachedPrivilege() { return savedPrivilege; }
     public String cachedApp() { return savedApp == null ? "" : savedApp; }
     public boolean serviceBindRefused() { return bridge.bindRefused(); }
-    /** Set once the daemon reported that it could not force the display size; keep-DPI then always uses compat scaling. */
-    private volatile boolean compatScaleForced;
-    private DisplaySettings.RenderPlan compatPlan;
-    private ByteBuffer compatTight;private Bitmap compatSource;
-    private final android.graphics.Paint compatPaint = new android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG);
-    public boolean compatScaleForced() { return compatScaleForced; }
-    private void forceCompatScale() {
-        if (compatScaleForced) return;
-        compatScaleForced = true;
-        try { if (context != null) context.getSharedPreferences("dev.ichinomiya.ninebotenhance.cached_display", Context.MODE_PRIVATE).edit().putInt("compat_scale_forced", 1).apply(); }
-        catch (RuntimeException e) { report("RENDER compat flag write " + Ipc.error(e)); }
-        report("RENDER compat scaling forced: keep-DPI renders at the plan size from the next session");
-    }
+    /** Keep-DPI: the size and density the display was created at for this session; null when no scaling is needed. */
+    private DisplaySettings.RenderPlan renderPlan;
+    private ByteBuffer scaledTight;private Bitmap scaledSource;
+    private final android.graphics.Paint scaledPaint = new android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG);
     private int phoneDensityDpi() {
         try {
             android.view.Display phone = context.getSystemService(android.hardware.display.DisplayManager.class).getDisplay(android.view.Display.DEFAULT_DISPLAY);
             android.util.DisplayMetrics metrics = new android.util.DisplayMetrics(); phone.getRealMetrics(metrics); return metrics.densityDpi;
         } catch (RuntimeException e) { report("RENDER phone density unavailable " + Ipc.error(e)); return 0; }
     }
-    /** Compat scaling: the plan-sized RGBA buffer is packed tight, then filtered down into the virtual area of a fresh frame bitmap. */
+    /** Keep-DPI: the plan-sized RGBA buffer is packed tight, then filtered down into the virtual area of a fresh frame bitmap. */
     private Bitmap composeScaled(Image.Plane plane, int width, int height, int frameWidth, int frameHeight) {
         int bytes = width * height * 4;
-        if (compatTight == null || compatTight.capacity() < bytes) compatTight = ByteBuffer.allocateDirect(bytes);
-        PixelPacking.rgba(plane.getBuffer(), plane.getRowStride(), plane.getPixelStride(), width, height, compatTight);
-        if (compatSource == null || compatSource.getWidth() != width || compatSource.getHeight() != height) compatSource = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-        compatSource.copyPixelsFromBuffer(compatTight);
+        if (scaledTight == null || scaledTight.capacity() < bytes) scaledTight = ByteBuffer.allocateDirect(bytes);
+        PixelPacking.rgba(plane.getBuffer(), plane.getRowStride(), plane.getPixelStride(), width, height, scaledTight);
+        if (scaledSource == null || scaledSource.getWidth() != width || scaledSource.getHeight() != height) scaledSource = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        scaledSource.copyPixelsFromBuffer(scaledTight);
         Bitmap frame = Bitmap.createBitmap(frameWidth, frameHeight, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(frame); canvas.drawColor(settings.background(dashboardDark));
-        canvas.drawBitmap(compatSource, null, new android.graphics.Rect(0, frameHeight - settings.virtualHeight, settings.virtualWidth, frameHeight), compatPaint);
+        canvas.drawBitmap(scaledSource, null, new android.graphics.Rect(0, frameHeight - settings.bottomInset - settings.virtualHeight, settings.virtualWidth, frameHeight - settings.bottomInset), scaledPaint);
         return frame;
     }
     public void appIcon(String component, android.widget.ImageView target) { appIcons.load(component, target); }
@@ -965,7 +1004,7 @@ public final class FrameClient {
             if (context != null) context.getSharedPreferences("dev.ichinomiya.ninebotenhance.cached_display", Context.MODE_PRIVATE).edit()
                     .putInt("width",value.width).putInt("height",value.height).putInt("dpi",value.dpi)
                     .putInt("layout_version",DisplaySettings.LAYOUT_VERSION).putInt("virtual_width",value.virtualWidth).putInt("virtual_height",value.virtualHeight)
-                    .putInt("background_color",value.backgroundColor).putInt("keep_phone_dpi",value.keepPhoneDpi?1:0).putInt("compat_scale",value.compatScale?1:0).putInt("virtual_override",value.virtualOverride?1:0).putInt("light_background_color",value.lightBackgroundColor).remove("top_inset").remove("top_color")
+                    .putInt("background_color",value.backgroundColor).putInt("keep_phone_dpi",value.keepPhoneDpi?1:0).putInt("virtual_override",value.virtualOverride?1:0).putInt("light_background_color",value.lightBackgroundColor).putInt("bottom_inset",value.bottomInset).remove("top_inset").remove("top_color")
                     .putString(AppCatalog.SELECTED, selected).apply();
         } catch (RuntimeException e) { report("SETTINGS cache write " + Ipc.error(e)); }
     }
@@ -1035,7 +1074,7 @@ public final class FrameClient {
     private String diagnosticHeader() {
         return "Ninebot Enhance " + Protocol.VERSION + " / Android " + Build.VERSION.RELEASE + " / " + Build.MANUFACTURER + " " + Build.MODEL
                 + "\n当前连接：\n" + status() + "\nprocess=" + process + " pid=" + android.os.Process.myPid()
-                + " mode=" + mode + " captureSource=" + (screenCapture ? "MediaProjection" : "VirtualDisplay")
+                + " casting=" + casting + " captureSource=" + (screenCapture ? "MediaProjection" : "VirtualDisplay")
                 + " debugMode=" + debugMode.enabled()
                 + "\nHUD " + hud.summary(SystemClock.elapsedRealtime())
                 + "\nTIRE " + tires.summary(SystemClock.elapsedRealtime())

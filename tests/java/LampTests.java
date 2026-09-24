@@ -54,9 +54,9 @@ final class LampTests {
 
         LampState ready=LampState.NONE.withPosition(42,50,10,90);
         CoreTests.check(ready.ready()&&ready.knownPosition()&&ready.text().equals("42")&&ready.unit().equals("%")&&ready.describe().equals("已连接 42%，行程 10–90%"),"a reporting lamp shows its height and the travel range the device reported");
-        for(LampState absent:new LampState[]{LampState.NONE,LampState.of(LampState.CONNECTING,""),LampState.of(LampState.REJECTED,""),ready.withPhase(LampState.FAILED,"")})
+        for(LampState absent:new LampState[]{LampState.NONE,LampState.of(LampState.CONNECTING,""),LampState.of(LampState.REJECTED,""),LampState.of(LampState.IDLE,""),ready.withPhase(LampState.FAILED,"")})
             CoreTests.check(!absent.knownPosition()&&absent.text().equals("未连接")&&absent.unit().isEmpty(),"every state but a live link reads 未连接");
-        CoreTests.check(LampState.of(LampState.REJECTED,"").describe().equals("密码错误")&&LampState.of(LampState.FAILED,"蓝牙未开启").describe().equals("连接失败：蓝牙未开启"),"the lamp screen names why the link is not up");
+        CoreTests.check(LampState.of(LampState.REJECTED,"").describe().equals("密码错误")&&LampState.of(LampState.FAILED,"蓝牙未开启").describe().equals("连接失败：蓝牙未开启")&&LampState.of(LampState.IDLE,"").describe().equals("未连接")&&!LampState.of(LampState.IDLE,"").ready(),"the lamp screen names why the link is not up");
         CoreTests.check(LampState.NONE.lowLimit()==0&&LampState.NONE.highLimit()==100&&ready.lowLimit()==10&&ready.highLimit()==90,"travel limits fall back to the full span before the first report");
 
         CoreTests.check(WidgetSettings.CARDS.contains(WidgetSettings.LAMP)&&WidgetSettings.DEFAULT_ORDER.contains(WidgetSettings.LAMP)

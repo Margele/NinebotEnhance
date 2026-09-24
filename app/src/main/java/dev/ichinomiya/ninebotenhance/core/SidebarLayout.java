@@ -5,18 +5,18 @@ import java.util.*;
 /** One geometry definition shared by drawing and hit testing, in the 848 x 480 reference frame. */
 public final class SidebarLayout {
     public static final float LEFT=648,RIGHT=838,BOTTOM=468,GAP=6,WIDTH=RIGHT-LEFT,MIN_WIDTH=24;
-    /** The reference frame is fitted into the encoder frame anchored bottom right; below this scale the cards are unreadable and are not drawn. */
+    /** Below this scale of the reference frame the cards are unreadable and are not drawn. */
     public static final float MIN_FIT=0.4f;
     /** Half-screen (portrait) frames show the card column and its margins across the whole frame width; the app keeps a strip above. */
     public static final float HALF_SCREEN_SPAN=848-(LEFT-10);
     public static final int HALF_SCREEN_TOP_INSET=20;
-    public record Fit(float scale,float dx,float dy,boolean halfScreen){}
+    public record Fit(float scale,float dx,float dy,boolean halfScreen,DashboardProfile profile){}
     public static boolean halfScreen(int width,int height){return width>0&&height>width;}
+    /** How the reference frame lands in the encoder frame: the frame's dashboard profile decides the scale and the anchor. */
     public static Fit fit(int width,int height){
-        if(width<=0||height<=0)return new Fit(0,0,0,false);
-        boolean half=halfScreen(width,height);
-        float scale=half?width/HALF_SCREEN_SPAN:Math.min(width/848f,height/480f);
-        return new Fit(scale,width-848*scale,height-480*scale,half);
+        if(width<=0||height<=0)return new Fit(0,0,0,false,DashboardProfile.of(848,480));
+        DashboardProfile profile=DashboardProfile.of(width,height);
+        return new Fit(profile.scale(),profile.dx(),profile.dy(),profile.halfScreen(),profile);
     }
     public static boolean fits(int width,int height){return fit(width,height).scale()>=MIN_FIT;}
     /** Half-screen notifications cannot be wider than the column they share with the cards. */

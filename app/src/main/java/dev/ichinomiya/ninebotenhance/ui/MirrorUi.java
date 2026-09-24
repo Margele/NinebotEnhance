@@ -108,6 +108,8 @@ public final class MirrorUi {
                 canvas.drawRoundRect(5, 5, 19, 19, 3, 3, paint);
             } else if ("chevron".equals(kind)) {
                 Path path = new Path(); path.moveTo(7, 9); path.lineTo(12, 14); path.lineTo(17, 9); canvas.drawPath(path, paint);
+            } else if ("display".equals(kind)) {
+                canvas.drawRoundRect(2.5f, 4, 21.5f, 17, 2.5f, 2.5f, paint); canvas.drawLine(12, 17, 12, 21, paint); canvas.drawLine(7.5f, 21, 16.5f, 21, paint);
             } else if ("choice".equals(kind) || "chosen".equals(kind)) {
                 canvas.drawCircle(12, 12, 8, paint);
                 if ("chosen".equals(kind)) { paint.setStyle(Paint.Style.FILL); canvas.drawCircle(12, 12, 4, paint); }

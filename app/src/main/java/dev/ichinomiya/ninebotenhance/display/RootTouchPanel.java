@@ -23,7 +23,8 @@ import java.util.function.Consumer;
 /**
  * Reads the bound external touch panel straight from its evdev node and turns every report into a touch on the virtual display.
  * The panel covers the whole dashboard, so its axes map onto the frame (through the calibration when one exists, else the mounting
- * rotation); the application picture is the frame's bottom-left part, contacts that first touch outside it are ignored. The node
+ * rotation); the application picture is the frame's left part above the profile's bottom strip, contacts that first touch outside
+ * it are ignored. The node
  * is grabbed exclusively (EVIOCGRAB) for the life of the session so the phone's own screen never sees the panel; closing the
  * descriptor releases it. The shell uid is in the {@code input} group, so this works under Shizuku as well as Root. The panel is
  * looked up again whenever it disappears, so unplugging and replugging it during a cast just resumes.
@@ -32,21 +33,23 @@ final class RootTouchPanel {
     interface Sink { void touch(MotionEvent event) throws Exception; }
     private static final int EVIOCGRAB = 0x40044590, EVENT_SIZE = 24, RESCAN_MS = 2000, POLL_MS = 500, MARKS_INTERVAL_MS = 40;
     private volatile TouchPanel panel;
-    private final int frameWidth, frameHeight, pictureWidth, pictureHeight;
+    private final int frameWidth, frameHeight, pictureWidth, pictureHeight, pictureTop;
     private final Sink sink;
     private final Consumer<float[]> marks, samples;
+    private final Consumer<Boolean> presence;
     private final Consumer<String> log;
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile boolean calibrating;
     private long lastSinkError, lastMarks;
     /**
      * {@code marks}, when not null, receives the contacts still down after each report (x / y pairs in frame pixels), moves rate
-     * limited; {@code samples} receives the raw normalized position of each tap while calibrating, when nothing is injected.
+     * limited; {@code samples} receives the raw normalized position of each tap while calibrating, when nothing is injected;
+     * {@code presence} learns when the panel's node is open for the session and when it is gone again.
      */
-    RootTouchPanel(TouchPanel panel, int frameWidth, int frameHeight, int pictureWidth, int pictureHeight, Sink sink,
-                   Consumer<float[]> marks, Consumer<float[]> samples, Consumer<String> log) {
-        this.panel = panel; this.frameWidth = frameWidth; this.frameHeight = frameHeight; this.pictureWidth = pictureWidth; this.pictureHeight = pictureHeight;
-        this.sink = sink; this.marks = marks; this.samples = samples; this.log = log;
+    RootTouchPanel(TouchPanel panel, int frameWidth, int frameHeight, int pictureWidth, int pictureHeight, int pictureTop, Sink sink,
+                   Consumer<float[]> marks, Consumer<float[]> samples, Consumer<Boolean> presence, Consumer<String> log) {
+        this.panel = panel; this.frameWidth = frameWidth; this.frameHeight = frameHeight; this.pictureWidth = pictureWidth; this.pictureHeight = pictureHeight; this.pictureTop = pictureTop;
+        this.sink = sink; this.marks = marks; this.samples = samples; this.presence = presence; this.log = log;
     }
     TouchPanel panel() { return panel; }
     void setPanel(TouchPanel value) { panel = value; calibrating = false; log.accept("TOUCH mapping " + mapping(value)); }
@@ -69,6 +72,7 @@ final class RootTouchPanel {
             waiting = false;
             try { serve(device); }
             catch (Exception e) { if (!closed.get()) log.accept("TOUCH " + device.path() + " lost: " + Ipc.error(e)); }
+            finally { presence.accept(false); }
             if (!closed.get()) sleep(RESCAN_MS);
         }
     }
@@ -90,7 +94,7 @@ final class RootTouchPanel {
         return TouchPanelMapping.map(rawX, rawY, device.x(), device.y(), current.rotation(), frameWidth, frameHeight);
     }
     private boolean insidePicture(float[] point) {
-        return point[0] >= 0 && point[0] < pictureWidth && point[1] >= frameHeight - pictureHeight && point[1] < frameHeight;
+        return point[0] >= 0 && point[0] < pictureWidth && point[1] >= pictureTop && point[1] < pictureTop + pictureHeight;
     }
     private void serve(TouchPanelProbe.Device device) throws Exception {
         FileDescriptor fd = Os.open(device.path(), OsConstants.O_RDONLY | OsConstants.O_NONBLOCK, 0);
@@ -100,6 +104,7 @@ final class RootTouchPanel {
             String grab = grab(fd);
             log.accept("TOUCH bound " + device.describe() + " frame=" + frameWidth + "x" + frameHeight + " picture=" + pictureWidth + "x" + pictureHeight
                     + " " + mapping(panel) + " grab=" + grab);
+            presence.accept(true);
             StructPollfd[] fds = { new StructPollfd() }; fds[0].fd = fd; fds[0].events = (short) OsConstants.POLLIN;
             byte[] buffer = new byte[EVENT_SIZE * 64]; long downTime = 0;
             while (!closed.get()) {
@@ -154,7 +159,7 @@ final class RootTouchPanel {
             return downTime;
         }
         if (report.action() == TouchPanelTracker.DOWN) downTime = now;
-        float top = frameHeight - pictureHeight;
+        float top = pictureTop;
         MotionEvent.PointerProperties[] properties = new MotionEvent.PointerProperties[count];
         MotionEvent.PointerCoords[] coords = new MotionEvent.PointerCoords[count];
         for (int i = 0; i < count; i++) {

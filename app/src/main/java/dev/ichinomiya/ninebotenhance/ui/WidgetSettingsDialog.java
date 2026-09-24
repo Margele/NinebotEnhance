@@ -32,7 +32,7 @@ public final class WidgetSettingsDialog {
         reads.setOnClickListener(v->WidgetOptionsDialog.reads(activity,frames,reference));
         LinearLayout.LayoutParams readParams=new LinearLayout.LayoutParams(-1,-2);readParams.topMargin=MirrorUi.dp(activity,8);readParams.bottomMargin=MirrorUi.dp(activity,8);content.addView(reads,readParams);
         LinearLayout hold=(LinearLayout)row(activity,frames,reference,theme,settings,WidgetSettings.HILL_HOLD_DODGE,checks,null,null);
-        if(frames.halfScreen())for(int i=0;i<hold.getChildCount();i++)hold.getChildAt(i).setEnabled(false);
+        if(!frames.hillHoldSupported())for(int i=0;i<hold.getChildCount();i++)hold.getChildAt(i).setEnabled(false);
         content.addView(hold,rowParams(activity));
         // Live phone navigation relayed to the dashboard (preference navi_live, default on); saved with the rest of the dialog.
         CheckBox naviLive=new CheckBox(activity);naviLive.setText("手机导航上仪表");naviLive.setTextColor(theme.text);naviLive.setTextSize(16);

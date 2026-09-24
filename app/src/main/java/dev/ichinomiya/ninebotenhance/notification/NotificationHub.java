@@ -37,7 +37,7 @@ public final class NotificationHub {
     }
     /** Each dashboard snapshot renews the lamp's hold, so the radio is open exactly while a cast session runs. */
     private Bundle lampBundle(){
-        lamp.hold(LampController.HOLD_MS);LampState state=lamp.state();Bundle b=new Bundle();
+        lamp.hold(LampController.HOLD_SESSION,LampController.HOLD_MS);LampState state=lamp.state();Bundle b=new Bundle();
         b.putInt("phase",state.phase());b.putInt("position",state.position());b.putInt("speed",state.speed());
         b.putInt("low",state.low());b.putInt("high",state.high());b.putString("detail",state.detail());
         // The height shown on the dashboard is the raw device position remapped onto the reported travel limits and reversed if
@@ -45,7 +45,21 @@ public final class NotificationHub {
         b.putInt("percent",lamp.settings().displayPercent(state.position(),state.lowLimit(),state.highLimit()));return b;
     }
     /** Each snapshot also keeps the BMS link open and its poll running; the reading is whatever the board last answered. */
-    private Bundle bmsBundle(){bms.hold(BmsController.HOLD_MS);bms.poll();return BmsBundle.write(bms.state(),bms.settings().pollMs());}
+    private Bundle bmsBundle(){bms.hold(BmsController.HOLD_SESSION,BmsController.HOLD_MS);bms.poll();return BmsBundle.write(bms.state(),bms.settings().pollMs());}
+    /**
+     * Ninebot's status poll says whether one of its screens is visible. The lamp and BMS links are held while it is and let go the
+     * moment it is not; a running session keeps holding them through its own snapshots, so casting with Ninebot behind another app
+     * is unaffected. A hub that was never created has no links to drop, so a background poll does not create one.
+     */
+    public static void hostVisible(Context c,boolean visible){
+        NotificationHub hub;
+        synchronized(NotificationHub.class){hub=instance;}
+        if(hub==null){if(!visible)return;hub=get(c);}
+        if(visible){
+            hub.lamp.hold(LampController.HOLD_FOREGROUND,LampController.HOLD_MS);
+            hub.bms.hold(BmsController.HOLD_FOREGROUND,BmsController.HOLD_MS);hub.bms.poll();
+        }else{hub.lamp.release(LampController.HOLD_FOREGROUND);hub.bms.release(BmsController.HOLD_FOREGROUND);}
+    }
     private void postCard(String key,String pkg,String title,String text,int duration){
         Bundle event=new Bundle();event.putString("key",key);event.putString("package",pkg);event.putString("title",title);event.putString("text",text);
         try{event.putString("app",context.getPackageManager().getApplicationLabel(context.getPackageManager().getApplicationInfo(pkg,0)).toString());}catch(Exception e){event.putString("app",pkg);}
