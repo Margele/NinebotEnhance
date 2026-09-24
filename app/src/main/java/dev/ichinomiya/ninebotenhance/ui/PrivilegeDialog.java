@@ -49,6 +49,11 @@ public final class PrivilegeDialog {
         mode.setBackground(theme.background(activity, theme.input, 14, false));
         mode.setClipToOutline(true); mode.setEnabled(false);
         content.addView(mode, new LinearLayout.LayoutParams(-1, -2));
+        CheckBox keepRoot = new CheckBox(activity); keepRoot.setText("不降权"); keepRoot.setTextColor(theme.text); keepRoot.setTextSize(15);
+        keepRoot.setButtonTintList(android.content.res.ColorStateList.valueOf(theme.accent)); keepRoot.setEnabled(false);
+        keepRoot.setPadding(0, MirrorUi.dp(activity, 8), 0, MirrorUi.dp(activity, 8));
+        LinearLayout.LayoutParams keepParams = new LinearLayout.LayoutParams(-1, -2); keepParams.topMargin = gap / 2;
+        content.addView(keepRoot, keepParams);
 
         TextView status = new TextView(activity);
         status.setText("正在连接模块并读取授权状态…");
@@ -86,6 +91,7 @@ public final class PrivilegeDialog {
         String[] serviceStatus = {status.getText().toString()};
         Runnable showMode = () -> {
             boolean recording = mode.getSelectedItemPosition() == 3;
+            keepRoot.setVisibility(recording ? View.GONE : View.VISIBLE);
             grant.setVisibility(recording ? View.GONE : View.VISIBLE);
             rootGrant.setVisibility(recording ? View.GONE : View.VISIBLE);
             refresh.setVisibility(recording ? View.GONE : View.VISIBLE);
@@ -115,13 +121,13 @@ public final class PrivilegeDialog {
                     // A tap during an automatic read must not be silently dropped or sent twice.
                     if (mutation && queued == null) {
                         queued = new Bundle(args); queuedClose = closeAfter;
-                        mode.setEnabled(false); save.setEnabled(false); grant.setEnabled(false); rootGrant.setEnabled(false);
+                        mode.setEnabled(false); keepRoot.setEnabled(false); save.setEnabled(false); grant.setEnabled(false); rootGrant.setEnabled(false);
                     }
                     return;
                 }
                 busy = true; main.removeCallbacks(this);
                 // Automatic status reads preserve both focus and the user's unsaved mode selection.
-                if (mutation || !selected) { mode.setEnabled(false); save.setEnabled(false); grant.setEnabled(false); rootGrant.setEnabled(false); }
+                if (mutation || !selected) { mode.setEnabled(false); keepRoot.setEnabled(false); save.setEnabled(false); grant.setEnabled(false); rootGrant.setEnabled(false); }
                 refresh.setEnabled(false);
                 frames.privilege(args, result -> {
                     busy = false;
@@ -133,12 +139,13 @@ public final class PrivilegeDialog {
                     if (!selected) {
                         String selectedMode = result.getString("privilege_mode", "AUTO");
                         for (int i = 0; i < names.length; i++) if (names[i].equals(selectedMode)) mode.setSelection(i);
+                        keepRoot.setChecked(result.getBoolean("keep_root"));
                         selected = true;
                     }
                     boolean active = result.getBoolean("active"), pending = result.getBoolean("privilege_pending");
                     serviceStatus[0] = result.getString("privilege_status", "授权服务状态不可用") + "\n\n" + result.getString("root_status", "Root 状态不可用")
                             + (active ? "\n请先结束投屏再修改授权方式。" : "");
-                    mode.setEnabled(!active); save.setEnabled(!active);
+                    mode.setEnabled(!active); keepRoot.setEnabled(!active); save.setEnabled(!active);
                     grant.setText(result.getBoolean("privilege_granted") ? "已授权" : pending ? "等待系统授权…" : "授权 Shizuku / Sui");
                     grant.setEnabled(result.getBoolean("privilege_can_request")); refresh.setEnabled(true);
                     rootGrant.setText(result.getBoolean("root_ready") ? "Root 权限可用" : result.getBoolean("root_pending") ? "正在检查 Root 权限…" : "申请 / 验证 Root 权限");
@@ -147,7 +154,7 @@ public final class PrivilegeDialog {
                     next();
                 }, message -> {
                     busy = false; if (!dialog.isShowing()) return;
-                    status.setText(message); mode.setEnabled(false); save.setEnabled(false); grant.setEnabled(false); rootGrant.setEnabled(false); refresh.setEnabled(true);
+                    status.setText(message); mode.setEnabled(false); keepRoot.setEnabled(false); save.setEnabled(false); grant.setEnabled(false); rootGrant.setEnabled(false); refresh.setEnabled(true);
                     next();
                 });
             }
@@ -162,7 +169,7 @@ public final class PrivilegeDialog {
         });
         save.setOnClickListener(v -> {
             int index = mode.getSelectedItemPosition(); if (index < 0 || index >= names.length) return;
-            Bundle args = new Bundle(); args.putBoolean("save", true); args.putString("privilege_mode", names[index]);
+            Bundle args = new Bundle(); args.putBoolean("save", true); args.putString("privilege_mode", names[index]); args.putBoolean("keep_root", keepRoot.isChecked());
             requests.query(args, true);
         });
         dialog.setOnDismissListener(v -> main.removeCallbacks(requests));

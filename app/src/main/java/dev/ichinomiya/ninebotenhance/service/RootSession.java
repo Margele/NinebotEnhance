@@ -38,7 +38,8 @@ public final class RootSession {
     private final IBinder host = new Binder() {
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
             data.enforceInterface(Protocol.DESCRIPTOR);
-            if (Binder.getCallingUid() != 2000 || code != Protocol.READ) throw new SecurityException();
+            int caller = Binder.getCallingUid();
+            if ((caller != 2000 && caller != 0) || code != Protocol.READ) throw new SecurityException();
             Bundle args = data.readBundle(getClass().getClassLoader()); Bundle result = new Bundle();
             synchronized (RootSession.this) { result.putBoolean("active", args != null && lease.owns(args.getString(Protocol.REQUEST))); }
             reply.writeNoException(); reply.writeBundle(result); return true;
@@ -52,6 +53,8 @@ public final class RootSession {
     private int displayId = -1, ownerUid;
     private String state = "未启动", lastRequest;
     private String backend = "未启动";
+    /** The daemon's first injection refusal this session (INJECT_EVENTS), surfaced to the host so it can guide the user once. */
+    private String inputDenied = "";
     private volatile String previousExit = "系统退出记录尚未读取";
     private long lastInputError;
     private int appRecovery;
@@ -131,7 +134,7 @@ public final class RootSession {
             if (android.os.Process.myUid() / 100000 != 0) { output.release(); throw new IllegalStateException("此版本仅支持手机主用户"); }
             if (!lease.begin(request, secret)) { output.release(); throw new IllegalStateException("已有投屏正在运行"); }
             current = requested; launchApp = app; surface = output; owner = client; ownerUid = uid; root = null; displayId = -1;
-            appRecovery = AppRecoveryState.HIDDEN; appRecoveryAt = 0; appRecoveryDetail = ""; touchPresent = false;
+            appRecovery = AppRecoveryState.HIDDEN; appRecoveryAt = 0; appRecoveryDetail = ""; touchPresent = false; inputDenied = "";
             appLayoutPolicy = "not-created";
             lastRequest = request; backend = "正在选择授权方式"; state = backend;
             ownerDeath = () -> stop(request, "九号进程已退出");
@@ -154,7 +157,7 @@ public final class RootSession {
                 throw new IllegalStateException("授权连接已失效，请先到设置 → 授权方式重新授权");
             synchronized (this) {
                 if (!lease.owns(request)) return;
-                backend = shizuku ? available.getString("privilege_status") : "Root 授权的 shell 辅助进程";
+                backend = shizuku ? available.getString("privilege_status") : "Root 授权的 " + (PrivilegeManager.keepRoot(context) ? "root" : "shell") + " 辅助进程";
                 state = shizuku ? "正在启动 Shizuku / Sui 辅助进程" : "正在使用已授权的 Root 连接启动虚拟屏";
             }
             Diagnostics.add("BACKEND " + backend);
@@ -200,6 +203,8 @@ public final class RootSession {
             } else if ("touch_state".equals(method)) {
                 boolean present = args.getBoolean("present");
                 if (present != touchPresent) { touchPresent = present; Diagnostics.add("TOUCH panel " + (present ? "present" : "absent")); }
+            } else if ("input_denied".equals(method)) {
+                inputDenied = LogDigest.head(args.getString("error", ""), 360); Diagnostics.add("INPUT denied by the system: " + inputDenied);
             } else if ("error".equals(method)) {
                 String request = lease.request(), error = args.getString("error", "未知错误");
                 main.post(() -> stop(request, error));
@@ -220,6 +225,7 @@ public final class RootSession {
         result.putString("backend", backend);
         result.putString(Protocol.APP_LAYOUT_POLICY, appLayoutPolicy);
         result.putBoolean("touch_bound", touchPanel().bound()); result.putBoolean("touch_present", touchPresent && lease.request() != null);
+        result.putString("input_denied", lease.request() != null ? inputDenied : "");
         result.putString(AppCatalog.SELECTED, launchApp == null ? "" : launchApp.flattenToString());
         boolean recent = appRecoveryAt != 0 && SystemClock.elapsedRealtime() - appRecoveryAt < 5000 && lease.isReady();
         result.putInt(Protocol.APP_RECOVERY, recent ? appRecovery : AppRecoveryState.HIDDEN);

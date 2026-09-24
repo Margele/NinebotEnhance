@@ -15,6 +15,8 @@ public final class RootAuthorization {
     /** Shell uid with the input group (AID_INPUT 1004) so the daemon may read an external touch panel; the plain form is the fallback. */
     private static final String[] SHELL_WITH_INPUT = {"su", "2000", "-g", "2000", "-G", "1004", "-c", "exec /system/bin/sh"},
             SHELL_PLAIN = {"su", "2000", "-c", "exec /system/bin/sh"};
+    /** The "keep root" option: uid 0 throughout, for ROMs whose shell lacks INJECT_EVENTS. Root reads input devices without the group. */
+    private static final String[] ROOT_SHELL = {"su", "-c", "exec /system/bin/sh"};
     private static Attempt current;
     private static final class Attempt {
         Process process;
@@ -44,18 +46,20 @@ public final class RootAuthorization {
             if (state.getBoolean("root_ready") || state.getBoolean("root_pending")) return;
             attempt = new Attempt(); attempt.automatic = automatic; current = attempt;
         }
-        Diagnostics.add(automatic ? "PRIVILEGE checking Root before cast" : "PRIVILEGE Root request from settings");
+        boolean keepRoot = PrivilegeManager.keepRoot(context);
+        Diagnostics.add((automatic ? "PRIVILEGE checking Root before cast" : "PRIVILEGE Root request from settings") + (keepRoot ? " (keep root)" : ""));
         new Thread(() -> {
             try {
                 AuthorizedShell shell = null;
-                for (boolean inputGroup : new boolean[]{true, false}) {
-                    // The input group lets the daemon read an external touch panel; a su that rejects the option is retried without it.
-                    Process process = new ProcessBuilder(inputGroup ? SHELL_WITH_INPUT : SHELL_PLAIN).redirectErrorStream(true).start();
+                for (boolean inputGroup : keepRoot ? new boolean[]{false} : new boolean[]{true, false}) {
+                    // Shell with the input group lets the daemon read an external touch panel; a su that rejects the option is retried
+                    // without it. Keep-root skips the drop entirely and verifies uid 0 instead.
+                    Process process = new ProcessBuilder(keepRoot ? ROOT_SHELL : inputGroup ? SHELL_WITH_INPUT : SHELL_PLAIN).redirectErrorStream(true).start();
                     synchronized (RootAuthorization.class) {
                         if (current != attempt || attempt.error != null) { process.destroy(); return; }
                         attempt.process = process;
                     }
-                    shell = new AuthorizedShell(process);
+                    shell = new AuthorizedShell(process, keepRoot ? 0 : 2000);
                     long deadline = android.os.SystemClock.elapsedRealtime() + 1200;
                     while (!shell.ready() && shell.pending() && android.os.SystemClock.elapsedRealtime() < deadline) Thread.sleep(50);
                     if (shell.ready() || shell.pending() || !inputGroup) break;

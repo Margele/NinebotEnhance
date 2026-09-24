@@ -111,6 +111,15 @@ final class AuthorizationTests {
             wrong.supply(marker(wrong.command()) + ":0"); await(() -> wrong.dead, "incorrect identity is rejected");
             check(!shell.ready(), "root UID is not substituted for required shell UID");
         }
+        FakeProcess rootKept = new FakeProcess();
+        try (AuthorizedShell shell = new AuthorizedShell(rootKept, 0)) {
+            rootKept.supply(marker(rootKept.command()) + ":0"); await(shell::ready, "keep-root expects and accepts the root identity");
+        }
+        FakeProcess rootDropped = new FakeProcess();
+        try (AuthorizedShell shell = new AuthorizedShell(rootDropped, 0)) {
+            rootDropped.supply(marker(rootDropped.command()) + ":2000"); await(() -> rootDropped.dead, "keep-root rejects a shell identity");
+            check(!shell.ready(), "shell UID is not substituted for required root UID");
+        }
         FakeProcess disconnected = new FakeProcess();
         try (AuthorizedShell shell = new AuthorizedShell(disconnected)) {
             disconnected.supply(marker(disconnected.command()) + ":2000"); await(shell::ready, "EOF scenario establishes authorization");

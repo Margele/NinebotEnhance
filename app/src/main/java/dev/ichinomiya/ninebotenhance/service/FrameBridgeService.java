@@ -47,6 +47,11 @@ public final class FrameBridgeService extends Service {
                     if (args.getBoolean("save")) synchronized (session) {
                         if (projection.active()) throw new IllegalStateException("请先结束投屏再修改授权方式");
                         session.savePrivilege(args.getString("privilege_mode"));
+                        if (args.containsKey("keep_root") && args.getBoolean("keep_root") != PrivilegeManager.keepRoot(FrameBridgeService.this)) {
+                            if (session.status().getBoolean("active")) throw new IllegalStateException("请先结束投屏再修改授权方式");
+                            // The retained Root shell carries the other identity: drop it so the next check reconnects with the chosen one.
+                            PrivilegeManager.saveKeepRoot(FrameBridgeService.this, args.getBoolean("keep_root")); RootAuthorization.close();
+                        }
                     }
                     if (args.getBoolean("request_permission")) PrivilegeManager.requestPermission();
                     if (args.getBoolean("request_root")) {

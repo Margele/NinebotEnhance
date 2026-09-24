@@ -52,10 +52,13 @@ public final class DirectCastController implements Application.ActivityLifecycle
     private WeakReference<Activity> permissionActivity = new WeakReference<>(null);
     /** The module's last release lookup, the version already offered this process, and how many lookups were asked for. */
     private Bundle update; private String updatePrompted; private int updateAttempts;
+    /** The system refused touch injection once this process: shown once, or on the next usable page when none is in front. */
+    private boolean inputDeniedPrompted; private String pendingInputDenial;
     public DirectCastController(FrameClient frames, BooleanSupplier compatible) {
         this.frames = frames; this.compatible = compatible;
         injector = new VehicleCardInjector(this, frames);
         frames.setDynamicPageListener(injector::refresh);
+        frames.setInputDeniedListener(this::inputDenied);
     }
     public void attach(Application application) { if (applications.add(application)) application.registerActivityLifecycleCallbacks(this); }
     public void inflated(int id, View view) {
@@ -335,6 +338,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
     };
     @Override public void onActivityResumed(Activity activity) {
         foreground = new WeakReference<>(activity); main.removeCallbacks(scan); main.post(scan);
+        if (pendingInputDenial != null) promptInputDenial(activity);
         if (compatible.getAsBoolean() && !CRUISE.equals(activity.getClass().getName())) scheduleUpdateCheck();
         if (panel != null && panel.owns(activity)) panel.resume();
         if (recordingPanel != null && recordingPanel.owns(activity)) recordingPanel.resume();
@@ -408,6 +412,33 @@ public final class DirectCastController implements Application.ActivityLifecycle
     private void openUrl(Activity activity, String url) {
         try { activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); }
         catch (RuntimeException e) { toast(activity, "没有可打开链接的应用"); }
+    }
+    // ---------------------------------------------------------------- input injection refused
+    private void inputDenied(String error) {
+        if (inputDeniedPrompted) return;
+        Activity activity = foreground.get();
+        if (usable(activity)) promptInputDenial(activity); else pendingInputDenial = error;
+    }
+    /** Xiaomi / HyperOS gate shell injection behind the developer option "USB debugging (security settings)"; that is the way out. */
+    private void promptInputDenial(Activity activity) {
+        if (inputDeniedPrompted || !usable(activity)) return;
+        inputDeniedPrompted = true; pendingInputDenial = null; frames.report("INPUT denied prompt");
+        MirrorUi theme = new MirrorUi(activity, reference(activity, null));
+        int pad = MirrorUi.dp(activity, 20);
+        TextView title = new TextView(activity); title.setText("系统拒绝触摸注入"); title.setTextSize(20); title.setTextColor(theme.text);
+        title.setPadding(pad, pad, pad, pad / 2);
+        TextView body = new TextView(activity); body.setText("请在开发者选项中打开「USB 调试（安全设置）」，然后重新开始投屏。"); body.setTextSize(14); body.setTextColor(theme.secondary);
+        body.setPadding(pad, pad / 2, pad, pad); body.setLineSpacing(MirrorUi.dp(activity, 3), 1);
+        AlertDialog dialog = new AlertDialog.Builder(activity).setCustomTitle(title).setView(body)
+                .setNegativeButton("关闭", null).setPositiveButton("打开开发者选项", (d, which) -> openDeveloperOptions(activity)).create();
+        dialog.show();
+        if (dialog.getWindow() != null) dialog.getWindow().setBackgroundDrawable(theme.background(activity, theme.surface, 24, false));
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(theme.accent);
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(theme.accent);
+    }
+    private void openDeveloperOptions(Activity activity) {
+        try { activity.startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); }
+        catch (RuntimeException e) { toast(activity, "无法打开开发者选项，请手动进入"); }
     }
     // ---------------------------------------------------------------- permission check before a start
     private void checkPermission(Activity activity, View anchor, Runnable start) {

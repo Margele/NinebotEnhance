@@ -181,7 +181,8 @@ public final class FrameClient {
             if (code == INTERFACE_TRANSACTION) { reply.writeString(Protocol.DESCRIPTOR); return true; }
             if (code != Protocol.OWNER_TOUCH_MARKS && code != Protocol.OWNER_TOUCH_SAMPLE) return super.onTransact(code, data, reply, flags);
             data.enforceInterface(Protocol.DESCRIPTOR);
-            if (Binder.getCallingUid() != 2000) throw new SecurityException("仅允许虚拟屏辅助进程");
+            int caller = Binder.getCallingUid();
+            if (caller != 2000 && caller != 0) throw new SecurityException("仅允许虚拟屏辅助进程");
             Bundle args = data.readBundle(getClass().getClassLoader());
             if (args != null && args.getString(Protocol.REQUEST, "").equals(ownerRequest)) {
                 if (code == Protocol.OWNER_TOUCH_SAMPLE) acceptCalibrationSample(args.getFloatArray("raw"));
@@ -350,8 +351,12 @@ public final class FrameClient {
     }
     private volatile DynamicViewFactory dynamicViewFactory;
     private volatile Runnable dynamicPageListener=()->{};
+    /** The module relayed the daemon's injection refusal; each distinct message is handed to the host UI once, on the main thread. */
+    private volatile java.util.function.Consumer<String> inputDeniedListener=error->{};
+    private String inputDeniedNotified="";
     public DynamicViewFactory dynamicViewFactory(){return dynamicViewFactory;}
     public void setDynamicPageListener(Runnable listener){dynamicPageListener=listener==null?()->{}:listener;}
+    public void setInputDeniedListener(java.util.function.Consumer<String> listener){inputDeniedListener=listener==null?error->{}:listener;}
     public void dynamicViewFactory(DynamicViewFactory value){
         DynamicViewFactory previous=dynamicViewFactory;dynamicViewFactory=value;
         if(previous==null||previous.deviceId()!=value.deviceId()||!previous.deviceTag().equals(value.deviceTag())){report("FEATURE page factory deviceId="+value.deviceId());main.post(dynamicPageListener);}
@@ -704,6 +709,8 @@ public final class FrameClient {
             active = status.getBoolean("active"); displayReady = status.getBoolean("ready"); state = status.getString("state", "");
             appRecovery = status.getInt(Protocol.APP_RECOVERY); appRecoveryDetail = status.getString(Protocol.APP_RECOVERY_DETAIL, "");
             touchBound = status.getBoolean("touch_bound"); touchPresent = status.getBoolean("touch_present");
+            String denied = status.getString("input_denied", "");
+            if (!denied.isEmpty() && !denied.equals(inputDeniedNotified)) { inputDeniedNotified = denied; report("INPUT denied: " + denied); main.post(() -> inputDeniedListener.accept(denied)); }
         } else {
             active = displayReady = false; state = "模块服务已重启或会话已失效，请重新开始投屏";
             appRecovery = AppRecoveryState.HIDDEN; appRecoveryDetail = ""; touchBound = touchPresent = false;

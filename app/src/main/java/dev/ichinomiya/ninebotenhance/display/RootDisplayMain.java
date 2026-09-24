@@ -48,6 +48,7 @@ public final class RootDisplayMain {
     private int moduleUid, displayId = -1;
     private IBinder owner, host;
     private long lastInputError;
+    private final java.util.concurrent.atomic.AtomicBoolean inputDeniedReported = new java.util.concurrent.atomic.AtomicBoolean();
     private Object inputManager;
     private Method inject, setDisplayId;
     private DisplaySettings settings;
@@ -72,9 +73,11 @@ public final class RootDisplayMain {
         if (args.length != 1 || !Protocol.validRequest(args[0])) System.exit(2);
         RootDisplayMain daemon = null;
         try {
-            // DisplayManager validates the supplied package against the actual Binder UID.
-            // Root was only needed to start app_process. All Android service calls use shell UID/package.
-            if (android.os.Process.myUid() != 2000) throw new SecurityException("Root 辅助进程 UID 不是 shell");
+            // Root was only needed to start app_process; the daemon normally runs as shell and every Android service call carries the
+            // shell uid/package. With the "keep root" authorization option it stays uid 0 (for ROMs that deny shell INJECT_EVENTS);
+            // the attribution still names shell, which root is allowed to use, as scrcpy does under adb root.
+            int uid = android.os.Process.myUid();
+            if (uid != 2000 && uid != 0) throw new SecurityException("Root 辅助进程 UID 不是 shell 或 root");
             Looper.prepareMainLooper();
             Class<?> runtime = Class.forName("dalvik.system.VMRuntime");
             try { runtime.getDeclaredMethod("setHiddenApiExemptions", String[].class)
@@ -101,6 +104,7 @@ public final class RootDisplayMain {
         if (!Protocol.validRequest(request) || moduleUid < 10000) throw new SecurityException("无效的模块会话");
         owner = config.getBinder("owner"); host = config.getBinder("host");
         if (owner == null || host == null) throw new IllegalArgumentException("缺少生命周期所有者");
+        log("DAEMON uid=" + android.os.Process.myUid());
         owner.linkToDeath(this::exit, 0); host.linkToDeath(this::exit, 0);
         // Independent watchdog also handles an interrupted/blocked create call and logical lease revocation.
         new Thread(() -> {
@@ -206,8 +210,7 @@ public final class RootDisplayMain {
         setDisplayId = InputEvent.class.getMethod("setDisplayId", int.class);
         keyboard = new RootKeyboard(display.getDisplay(), main, event -> {
             if (displayId <= 0 || stopped.get()) throw new IllegalStateException("虚拟屏已关闭");
-            setDisplayId.invoke(event, displayId);
-            if (!Boolean.TRUE.equals(inject.invoke(inputManager, event, 2))) throw new IllegalStateException("系统拒绝副屏键盘输入");
+            if (!injectEvent(event, 2)) throw new IllegalStateException("系统拒绝副屏键盘输入");
         }, this::log);
         keyboard.configure();
         TouchPanel panel = TouchPanel.read(config::getInt, config::getString);
@@ -276,8 +279,19 @@ public final class RootDisplayMain {
     };
     private void sendInput(InputEvent event) throws Exception {
         if (displayId <= 0 || stopped.get()) return;
+        if (!injectEvent(event, 0)) throw new SecurityException("系统拒绝虚拟屏输入注入");
+    }
+    /** Every injection (preview touch, external panel, keyboard) passes here; the first permission refusal is reported to the module once. */
+    private boolean injectEvent(InputEvent event, int mode) throws Exception {
         setDisplayId.invoke(event, displayId);
-        if (!Boolean.TRUE.equals(inject.invoke(inputManager, event, 0))) throw new SecurityException("系统拒绝虚拟屏输入注入");
+        try { return Boolean.TRUE.equals(inject.invoke(inputManager, event, mode)); }
+        catch (Exception e) { noteInputDenial(e); throw e; }
+    }
+    private void noteInputDenial(Exception e) {
+        String error = Ipc.error(e);
+        if (!dev.ichinomiya.ninebotenhance.core.InputDenial.matches(error) || !inputDeniedReported.compareAndSet(false, true)) return;
+        try { Bundle data = new Bundle(); data.putString("error", LogDigest.head(error, 360)); providerCall("input_denied", data); }
+        catch (Exception ignored) { /* Advisory only; the injection error itself still reaches the caller. */ }
     }
     /** Shared by the phone preview (Binder threads) and the external touch panel (its reader thread); one gesture state. */
     private synchronized void sendTouch(MotionEvent event) throws Exception {

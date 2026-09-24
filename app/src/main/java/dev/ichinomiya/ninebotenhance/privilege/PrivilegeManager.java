@@ -44,7 +44,7 @@ public final class PrivilegeManager {
         }, MAIN);
     }
     public static Bundle status(Context context) {
-        Bundle result = new Bundle(); result.putString("privilege_mode", mode(context).name());
+        Bundle result = new Bundle(); result.putString("privilege_mode", mode(context).name()); result.putBoolean("keep_root", keepRoot(context));
         boolean running = Shizuku.pingBinder(), allowed = false, supported = false, blocked = false;
         String backend = Sui.isSui() ? "Sui" : "Shizuku / Sui";
         String detail;
@@ -96,6 +96,9 @@ public final class PrivilegeManager {
     public static void save(Context context, String mode) {
         context.getSharedPreferences("privilege", 0).edit().putString("mode", PrivilegeMode.parse(mode).name()).apply();
     }
+    /** The daemon keeps uid 0 instead of dropping to shell: for ROMs that deny shell INJECT_EVENTS. Only Root and root-run Shizuku / Sui can honour it. */
+    public static boolean keepRoot(Context context) { return context.getSharedPreferences("privilege", 0).getBoolean("keep_root", false); }
+    public static void saveKeepRoot(Context context, boolean keep) { context.getSharedPreferences("privilege", 0).edit().putBoolean("keep_root", keep).apply(); }
     public static void requestPermission() {
         if (!Shizuku.pingBinder() || !binderReady) throw new IllegalStateException("授权服务尚未就绪，请先启动 Shizuku，或确认 Sui 已正常运行");
         if (Shizuku.getVersion() < 13) throw new IllegalStateException("请更新 Shizuku / Sui：需要服务端 API 13 或以上");
@@ -134,7 +137,7 @@ public final class PrivilegeManager {
         MAIN.post(() -> { try { Shizuku.bindUserService(args, connection); } catch (RuntimeException e) { connected.completeExceptionally(e); } });
         try {
             IBinder service = connected.get(15, TimeUnit.SECONDS);
-            Bundle request = new Bundle(); request.putString("secret", secret); request.putBinder("owner", owner);
+            Bundle request = new Bundle(); request.putString("secret", secret); request.putBinder("owner", owner); request.putBoolean("keep_root", keepRoot(context));
             Bundle response = call(service, PrivilegedLauncher.START, request);
             ParcelFileDescriptor output = response.getParcelable("output", ParcelFileDescriptor.class);
             if (output == null) throw new IOException("授权服务没有返回输出通道");

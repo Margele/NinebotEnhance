@@ -235,6 +235,9 @@ public final class CoreTests {
         PixelPacking.rgba(ByteBuffer.wrap(spaced),16,8,2,1,twoPixels);
         check(Arrays.equals(twoPixels.array(), new byte[]{1,2,3,4,5,6,7,8}), "pixel stride handled");
         // Exporting a Binder service must not make the user's screen public to unrelated applications.
+        check(InputDenial.matches("SecurityException: Injecting input events requires the caller (or the source of the instrumentation, if any) to have the INJECT_EVENTS permission."), "permission text recognized as an injection denial");
+        check(InputDenial.matches("RemoteException: Remote stack trace: \tat com.android.server.input.InputManagerService.injectInputEventToTarget(InputManagerService.java:1172)"), "remote injection stack recognized as an injection denial");
+        check(!InputDenial.matches("IllegalStateException: 虚拟屏已关闭") && !InputDenial.matches(null), "unrelated errors are not injection denials");
         check(!CallerPolicy.allowed(20001,20002,null), "unknown caller denied");
         check(!CallerPolicy.allowed(20001,20002,new String[]{"evil.cn.ninebot.ninebot"}), "lookalike package denied");
         check(!CallerPolicy.allowed(20001,20002,new String[]{"com.example.other"}), "unrelated app denied");

@@ -35,6 +35,7 @@ public final class PrivilegedLauncher extends Binder {
                     Bundle args = data.readBundle(getClass().getClassLoader());
                     String secret = args == null ? null : args.getString("secret");
                     IBinder lifecycle = args == null ? null : args.getBinder("owner");
+                    boolean keepRoot = args != null && args.getBoolean("keep_root");
                     if (!Protocol.validRequest(secret) || lifecycle == null || !lifecycle.isBinderAlive()) throw new SecurityException("Invalid session");
                     synchronized (this) {
                         if (used) throw new IllegalStateException("Launcher already used"); used = true;
@@ -42,7 +43,8 @@ public final class PrivilegedLauncher extends Binder {
                         String command = "CLASSPATH=" + DisplaySettings.shellQuote(apk)
                                 + " /system/bin/app_process / " + Protocol.DAEMON_CLASS + " " + DisplaySettings.shellQuote(secret);
                         int uid = android.os.Process.myUid();
-                        if (uid == 2000) child = new ProcessBuilder("/system/bin/sh", "-c", command).redirectErrorStream(true).start();
+                        // Shizuku over ADB is already shell. A root-run Shizuku / Sui drops to shell unless the module asked to keep root.
+                        if (uid == 2000 || (uid == 0 && keepRoot)) child = new ProcessBuilder("/system/bin/sh", "-c", command).redirectErrorStream(true).start();
                         else if (uid == 0) child = asShell(command);
                         else throw new SecurityException("Unsupported Shizuku UID");
                         ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();

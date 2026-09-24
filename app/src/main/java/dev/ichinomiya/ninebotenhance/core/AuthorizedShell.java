@@ -8,14 +8,17 @@ import java.util.concurrent.CountDownLatch;
 /** A verified, retained shell. Checking readiness never starts su or requests permission. */
 public final class AuthorizedShell implements AutoCloseable {
     private final Process process;
+    /** The uid the shell must report: shell (2000) after the usual drop, root (0) with the keep-root authorization option. */
+    private final int expectedUid;
     private final OutputStream commands;
     private final String readyMarker = marker();
     private volatile boolean ready, closed;
     private volatile String failure = "正在等待 Root 授权与身份验证";
     private Job active;
 
-    public AuthorizedShell(Process process) throws IOException {
-        this.process = process; commands = process.getOutputStream();
+    public AuthorizedShell(Process process) throws IOException { this(process, 2000); }
+    public AuthorizedShell(Process process, int expectedUid) throws IOException {
+        this.process = process; this.expectedUid = expectedUid; commands = process.getOutputStream();
         Thread reader = new Thread(this::read, "Enhance-RootOutput"); reader.setDaemon(true); reader.start();
         try { write("printf '\\n%s:%s\\n' '" + readyMarker + "' \"$(/system/bin/id -u)\"\n"); }
         catch (IOException e) { close("Root 验证通道已关闭"); throw e; }
@@ -41,7 +44,7 @@ public final class AuthorizedShell implements AutoCloseable {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (!ready && line.startsWith(readyMarker + ":")) {
-                    if (!line.equals(readyMarker + ":2000")) { close("Root 验证失败：辅助进程未取得 shell 身份"); return; }
+                    if (!line.equals(readyMarker + ":" + expectedUid)) { close("Root 验证失败：辅助进程未取得 " + (expectedUid == 0 ? "root" : "shell") + " 身份"); return; }
                     synchronized (this) { if (!closed) { ready = true; failure = ""; } }
                     continue;
                 }

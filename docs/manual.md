@@ -45,7 +45,7 @@
 | 作用域 | **九号出行**（`cn.ninebot.ninebot`）以及高德地图、腾讯地图、百度地图（导航数据上仪表），无需系统框架 |
 | 授权方式 | Root、提供 API 13+ 的 Shizuku / Sui，或系统录屏授权 |
 
-所有模式均需启用 LSPosed 模块。Root / Shizuku / Sui 用于创建和控制独立虚拟屏；“无（投屏）”使用系统录屏。Root 及以 Root 运行的 Shizuku / Sui 需要设备支持 `su 2000`；辅助进程以 shell 身份运行。其他手机、系统和仪表的行为可能不同。
+所有模式均需启用 LSPosed 模块。Root / Shizuku / Sui 用于创建和控制独立虚拟屏；“无（投屏）”使用系统录屏。Root 及以 Root 运行的 Shizuku / Sui 需要设备支持 `su 2000`；辅助进程默认以 shell 身份运行，勾选“不降权”后以 root 身份运行。其他手机、系统和仪表的行为可能不同。
 
 ## 安装与使用
 
@@ -68,6 +68,10 @@
 | 无（投屏） | 无需 Root / Shizuku / Sui；每次开始后，在系统录屏窗口选择单个应用或整个屏幕 |
 
 已有 Root 连接会被复用；服务重启或连接失效后，投屏前自动重新验证。缺少授权时会提示前往设置，完成授权后重新点击投屏。Shizuku / Sui 被拒绝且不再询问时，需要在其管理界面为 Ninebot Enhance 开启权限；Sui 管理入口见 [官方说明](https://github.com/RikkaApps/Sui#management-ui)。
+
+投屏画面正常但副屏无法触摸、外接触摸屏和键盘也无效，日志里反复出现 `Injecting input events requires ... INJECT_EVENTS`：这是系统不给 shell 身份注入权限。小米 / HyperOS 上到开发者选项打开“USB 调试（安全设置）”即可，它管的就是通过 USB 调试模拟点击的权限，和是否插线无关。模块检测到这条错误时会弹窗说明并提供“打开开发者选项”按钮，每次运行只弹一次。
+
+“不降权”复选框是另一条路：默认辅助进程用 `su 2000` 降到 shell 身份运行；勾选后保持 root 身份（uid 0），不再受这项限制。只对 Root，以及以 Root 运行的 Shizuku / Sui 生效；ADB 方式启动的 Shizuku 本身就是 shell，无法提升。勾选或取消后，下次开始投屏会重新验证 Root；日志里的 `DAEMON uid=` 和 `backend=Root 授权的 root 辅助进程` 可确认已生效。
 
 ### 车辆投屏
 
