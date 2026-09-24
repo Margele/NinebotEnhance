@@ -80,7 +80,8 @@ public final class DirectCastController implements Application.ActivityLifecycle
         Button cast = row.cast();
         if (permissionCheck.active()) { cast.setText("取消授权检查"); cast.setEnabled(true); return; }
         switch (session.cast()) {
-            case IDLE: cast.setText("全屏投屏"); cast.setEnabled(injector.cruiseEntry(VehicleCardInjector.activity(row.view().getContext())) != null); return;
+            // Always clickable: the vehicle checks run on the tap (missing entry, power off), never as a greyed button.
+            case IDLE: cast.setText("全屏投屏"); break;
             case CHECKING_VEHICLE: cast.setText("取消车辆检查"); break;
             case WAITING_DISPLAY: case STARTING: cast.setText(virtual ? "取消投屏启动" : "取消录屏启动"); break;
             case RUNNING: cast.setText("停止投屏"); break;
