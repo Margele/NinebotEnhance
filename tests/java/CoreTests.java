@@ -358,8 +358,8 @@ public final class CoreTests {
         check(report.total() == 8 && report.missing().equals(java.util.List.of("String#getBytes(byte[])", "String#nope(…)", "Missing", "id:ivCruise")), "the catalog reports exactly the missing classes, methods and resources: " + report.missing());
         check(report.text().startsWith("Hook 目标 4/8 可用，缺失：") && HookCatalog.verify(catalog.subList(0, 3), name -> { try { return Class.forName(name); } catch (ClassNotFoundException e) { return null; } }, t -> 1).text().equals("Hook 目标 3/3 可用"), "the report text counts available targets");
         check(HookCatalog.ALL.size() >= 20 && HookCatalog.ALL.stream().anyMatch(t -> t.owner().equals(HookCatalog.DEVICE) && t.member().equals("sendCommand")), "the catalog covers the vehicle read path");
-        check(HookCatalog.compatible("6.10.10", 610104038L) && HookCatalog.compatible("6.10.11", 610114116L) && !HookCatalog.compatible("6.10.11", 610104038L)
-                && !HookCatalog.compatible("6.10.12", 610114116L) && !HookCatalog.compatible(null, 610114116L) && HookCatalog.versions().equals("6.10.10 / 6.10.11"),
+        check(HookCatalog.compatible("6.10.10", 610104038L) && HookCatalog.compatible("6.10.11", 610114116L) && HookCatalog.compatible("6.10.12", 610124146L) && !HookCatalog.compatible("6.10.11", 610104038L)
+                && !HookCatalog.compatible("6.10.12", 610114116L) && !HookCatalog.compatible(null, 610114116L) && HookCatalog.versions().equals("6.10.10 / 6.10.11 / 6.10.12"),
                 "the version gate admits exactly the verified builds by name and code");
         check(OpenSourceNotice.matches("我已知本项目免费开源在GitHub。") && OpenSourceNotice.matches("  我已知本项目免费开源在GitHub. ")
                 && !OpenSourceNotice.matches("我已知本项目免费开源在GitHub") && !OpenSourceNotice.matches("") && !OpenSourceNotice.matches(null)
