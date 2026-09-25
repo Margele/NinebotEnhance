@@ -538,6 +538,12 @@ public final class DirectCastController implements Application.ActivityLifecycle
         MirrorUi theme = new MirrorUi(activity, card);
         LinearLayout layout = new LinearLayout(activity); layout.setOrientation(LinearLayout.VERTICAL);
         int pad = Math.round(20 * activity.getResources().getDisplayMetrics().density); layout.setPadding(pad, pad / 2, pad, 0);
+        if (!frames.versionTested()) {
+            TextView warning = new TextView(activity); warning.setTextColor(0xffe06c5c); warning.setTextSize(14);
+            warning.setText("当前九号出行版本未测试，当前版本为: " + frames.targetVersion());
+            LinearLayout.LayoutParams warningParams = new LinearLayout.LayoutParams(-1, -2); warningParams.bottomMargin = MirrorUi.dp(activity, 12);
+            layout.addView(warning, warningParams);
+        }
         TextView connection = new TextView(activity); connection.setTextColor(theme.secondary); connection.setTextSize(13);
         connection.setLineSpacing(MirrorUi.dp(activity, 3), 1);
         LinearLayout.LayoutParams connectionParams = new LinearLayout.LayoutParams(-1, -2); connectionParams.bottomMargin = MirrorUi.dp(activity, 16);

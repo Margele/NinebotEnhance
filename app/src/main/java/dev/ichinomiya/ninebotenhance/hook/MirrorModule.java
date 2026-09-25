@@ -45,7 +45,10 @@ public final class MirrorModule extends XposedModule {
     private FrameClient frames;
     private DirectCastController direct;
     private String process;
-    private volatile boolean compatibleVersion;
+    /** Set once Ninebot's Application is attached; the hooks and the vehicle page need nothing else. */
+    private volatile boolean hostAttached;
+    /** Whether the running build is one whose hook targets were verified by hand; others get a warning, not a disabled module. */
+    private volatile boolean versionTested = true;
     private int scanCount;
     private final String[] seeds = {
         "cn.ninebot.capture.CaptureClient", "cn.ninebot.capture.VideoConfig", "cn.ninebot.capture.AbstractCaptureController",
@@ -99,15 +102,15 @@ public final class MirrorModule extends XposedModule {
         statistics = new StatisticsHooks(this, frames);
         feature = new FeatureHooks(this, frames);
         encoding = new EncodingHooks(this, frames);
-        tirePressure = new TirePressureHooks(this, frames, () -> compatibleVersion, this::updateSummary);
-        vehicle = new VehicleHooks(this, frames, () -> compatibleVersion, this::updateSummary);
+        tirePressure = new TirePressureHooks(this, frames, () -> hostAttached, this::updateSummary);
+        vehicle = new VehicleHooks(this, frames, () -> hostAttached, this::updateSummary);
         frames.setVehicleReader(vehicle::pulse, vehicle::stop, vehicle::summary);
-        naviSender = new NaviSender(frames, vehicle::deviceClass, () -> compatibleVersion);
+        naviSender = new NaviSender(frames, vehicle::deviceClass, () -> hostAttached);
         frames.setNaviTest(naviSender::pulse, naviSender::stop);
         frames.setNaviLive(naviSender::pulseLive);
         frames.setThemeSender(naviSender::pulseTheme);
         encoding.install();
-        direct = new DirectCastController(frames, () -> compatibleVersion);
+        direct = new DirectCastController(frames, () -> hostAttached);
         frames.report("MODULE " + Protocol.VERSION + " loaded API=" + getApiVersion() + "; target=" + HookCatalog.versions() + "; direct cruise entry");
         try {
             Method attach = Application.class.getDeclaredMethod("attach", Context.class);
@@ -118,9 +121,10 @@ public final class MirrorModule extends XposedModule {
                     if (Protocol.TARGET.equals(context.getPackageName())) {
                         frames.attach(context);
                         android.content.pm.PackageInfo info = context.getPackageManager().getPackageInfo(Protocol.TARGET, 0);
-                        compatibleVersion = HookCatalog.compatible(info.versionName, info.getLongVersionCode());
+                        versionTested = HookCatalog.compatible(info.versionName, info.getLongVersionCode()); hostAttached = true;
+                        frames.targetVersion(info.versionName, info.getLongVersionCode(), versionTested);
                         if (chain.getThisObject() instanceof Application) direct.attach((Application)chain.getThisObject());
-                        frames.report("TARGET " + info.versionName + "/" + info.getLongVersionCode() + " compatible=" + compatibleVersion);
+                        frames.report("TARGET " + info.versionName + "/" + info.getLongVersionCode() + " tested=" + versionTested);
                         loaders.add(context.getClassLoader());
                         if (chain.getThisObject() != null) loaders.add(chain.getThisObject().getClass().getClassLoader());
                         frames.report("APPLICATION attached after wrapper");
@@ -140,7 +144,7 @@ public final class MirrorModule extends XposedModule {
         } catch (Throwable e) { frames.report("DIRECT entry hook failed " + e.getClass().getSimpleName()); }
         try {
             hook(View.class.getDeclaredMethod("draw", Canvas.class)).intercept(chain -> {
-                if (compatibleVersion && captureDepth.get() > 0) {
+                if (hostAttached && captureDepth.get() > 0) {
                     View view = (View) chain.getThisObject();
                     try {
                         Canvas canvas = (Canvas) chain.getArg(0);
@@ -228,7 +232,7 @@ public final class MirrorModule extends XposedModule {
     }
     private void updateSummary() {
         String compatibility = frames.compatibility();
-        frames.summary((compatibleVersion ? "" : "版本未确认或不匹配，替换已禁用\n") + (compatibility.isEmpty() || compatibility.contains("缺失") ? compatibility + (compatibility.isEmpty() ? "" : "\n") : "")
+        frames.summary((versionTested ? "" : "当前九号出行版本未测试\n") + (compatibility.isEmpty() || compatibility.contains("缺失") ? compatibility + (compatibility.isEmpty() ? "" : "\n") : "")
                 + "发现 " + seen.size() + " 类 / 安装 " + (hooked.size()+tirePressure.hookCount()+vehicle.hookCount()+feature.hookCount()) + " Hook / 命中 " + (called.size()+tirePressure.hitCount()+vehicle.hitCount()));
     }
     private void installPowerObserver(Method method) {
@@ -240,7 +244,7 @@ public final class MirrorModule extends XposedModule {
         if (!hooked.add(method)) return;
         try {
             hook(method).intercept(chain -> {
-                String request = compatibleVersion ? direct.vehicleCheckRequest() : null;
+                String request = hostAttached ? direct.vehicleCheckRequest() : null;
                 if (request == null) return chain.proceed();
                 // Kotlin re-enters this method with its own state machine on resume. Wrapping that
                 // argument would hide its type/label and restart the suspended function.
@@ -264,7 +268,7 @@ public final class MirrorModule extends XposedModule {
         if (!hooked.add(method)) return;
         try {
             hook(method).intercept(chain -> {
-                if (!compatibleVersion) return chain.proceed();
+                if (!hostAttached) return chain.proceed();
                 if (called.add(method)) {
                     frames.report("HIT " + method.toGenericString());
                     updateSummary();

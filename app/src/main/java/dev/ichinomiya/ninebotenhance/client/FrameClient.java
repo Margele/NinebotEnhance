@@ -398,6 +398,11 @@ public final class FrameClient {
     public void saveProbeRawModules(java.util.Set<String> modules){if(context==null)return;java.util.Set<String> copy=new java.util.LinkedHashSet<>(modules);context.getSharedPreferences(Protocol.MODULE+".widgets",Context.MODE_PRIVATE).edit().putStringSet("probe_raw_modules",copy).apply();probeRawModules=copy;}
     /** Outcome of the hook catalog check, filled once the target application is attached. */
     public String compatibility(){return compatibility;}
+    private volatile String targetVersion="";private volatile boolean versionTested=true;
+    /** The running Ninebot build as "name (code)" and whether its hook targets were verified by hand. */
+    public void targetVersion(String name,long code,boolean tested){targetVersion=name+" ("+code+")";versionTested=tested;}
+    public String targetVersion(){return targetVersion;}
+    public boolean versionTested(){return versionTested;}
     public void compatibility(String text){compatibility=text==null?"":text;}
     private static java.util.Map<Integer,WidgetCondition> loadConditions(SharedPreferences saved){
         java.util.LinkedHashMap<Integer,WidgetCondition> map=new java.util.LinkedHashMap<>();
