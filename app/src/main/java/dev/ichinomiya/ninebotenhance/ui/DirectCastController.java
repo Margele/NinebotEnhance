@@ -505,14 +505,11 @@ public final class DirectCastController implements Application.ActivityLifecycle
         // The utilities share one row, the four tools another; labels shrink before they wrap.
         Button authorization = new Button(activity); authorization.setText("授权方式"); theme.button(authorization, null);
         Button statistics = new Button(activity); statistics.setText("统计信息"); theme.button(statistics, null);
-        Button autostart = null;
-        if (ServiceBridge.hyperOs()) {
-            // Without autostart HyperOS refuses the bind that starts the module process; offer the system page directly.
-            autostart = new Button(activity); autostart.setText("自启动设置"); theme.button(autostart, null);
-            autostart.setOnClickListener(v -> openAutostart(activity));
-        }
+        // The module's own entry page: the permission check with the autostart and notification pages behind its rows.
+        Button permissions = new Button(activity); permissions.setText("权限设置"); theme.button(permissions, null);
+        permissions.setOnClickListener(v -> openModule(activity));
         if (!frames.serviceConnected()) connection.setText(frames.serviceStatus());
-        buttonRow(activity, layout, 0, autostart == null ? new Button[]{authorization, statistics} : new Button[]{authorization, statistics, autostart});
+        buttonRow(activity, layout, 0, new Button[]{authorization, statistics, permissions});
         Button upgrade = new Button(activity); theme.button(upgrade, null); upgrade.setVisibility(View.GONE);
         LinearLayout.LayoutParams upgradeParams = new LinearLayout.LayoutParams(-1, -2); upgradeParams.topMargin = MirrorUi.dp(activity, 12);
         layout.addView(upgrade, upgradeParams);
@@ -712,6 +709,13 @@ public final class DirectCastController implements Application.ActivityLifecycle
         builder.show();
     }
     private void openAutostart(Activity activity) { AutostartPages.open(activity, frames::report); }
+    /** The module APK's exported launcher activity, started from the host by component; forceQueryable keeps it visible. */
+    private void openModule(Activity activity) {
+        try {
+            activity.startActivity(new Intent().setClassName(Protocol.MODULE, ModuleActivity.class.getName()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            frames.report("SETTINGS module entry opened");
+        } catch (RuntimeException e) { toast(activity, "无法打开 Ninebot Enhance"); frames.report("SETTINGS module entry failed " + e.getClass().getSimpleName()); }
+    }
     public void entryDetails(Activity activity, View anchor) {
         if (!usable(activity)) return;
         frames.report("DIRECT ENTRY " + VehicleCardInjector.entryInfo(injector.navigationCard()));
