@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish verified files from push/manual runs on main. Published versions are never replaced."""
+"""Publish verified files from a pushed v<version> tag. Published versions are never replaced."""
 import json
 import os
 import re
@@ -24,19 +24,23 @@ def changelog(version):
     return '\n'.join(out).strip()
 
 def main():
-    if os.environ.get('GITHUB_EVENT_NAME') not in ('push', 'workflow_dispatch') or os.environ.get('GITHUB_REF') != 'refs/heads/main':
-        raise SystemExit('Release publication requires a push or manual workflow on main')
+    ref = os.environ.get('GITHUB_REF', '')
+    if os.environ.get('GITHUB_EVENT_NAME') not in ('push', 'workflow_dispatch') or not ref.startswith('refs/tags/v'):
+        raise SystemExit('Release publication requires a pushed or manually run v<version> tag')
     repository = os.environ.get('GITHUB_REPOSITORY', '')
     if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
         raise SystemExit('Missing valid repository identity')
     folder = ROOT / 'dist/release'
     info = json.loads((folder / 'BUILD-INFO.json').read_text(encoding='utf-8'))
-    if info['kind'] != 'release' or info['commit'] != git('rev-parse', 'HEAD') or info['commit'] != os.environ.get('GITHUB_SHA'):
+    # An annotated tag reports its own object as GITHUB_SHA; the commit it names is what the files were built from.
+    if info['kind'] != 'release' or info['commit'] != git('rev-parse', 'HEAD') or info['commit'] != git('rev-parse', os.environ.get('GITHUB_SHA', '') + '^{commit}'):
         raise SystemExit('Release files do not match the workflow commit')
     version = info['version']
     if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?', version):
         raise SystemExit('Invalid release version')
     tag = 'v' + version
+    if ref != 'refs/tags/' + tag:
+        raise SystemExit(f'Tag {ref[len("refs/tags/"):]} does not match version {version} in version.properties')
     expected = {f'NinebotEnhance-{version}.apk', f'NinebotEnhance-{version}-source.zip', 'BUILD-INFO.json'}
     lines = (folder / 'SHA256SUMS.txt').read_text().splitlines()
     files = {}
@@ -47,13 +51,16 @@ def main():
         files[name] = folder / name
     if set(files) != expected:
         raise SystemExit('Incomplete release files')
-    refs = json.loads(subprocess.check_output(['gh', 'api', f'repos/{repository}/git/matching-refs/tags/{tag}'], text=True, encoding='utf-8'))
-    if any(ref['ref'] == 'refs/tags/' + tag for ref in refs):
-        published = json.loads(subprocess.check_output(['gh', 'release', 'view', tag, '--repo', repository, '--json', 'isDraft,assets,url'], text=True, encoding='utf-8'))
+    try:
+        published = json.loads(subprocess.check_output(['gh', 'release', 'view', tag, '--repo', repository, '--json', 'isDraft,assets,url'],
+                                                       text=True, encoding='utf-8', stderr=subprocess.DEVNULL))
+    except subprocess.CalledProcessError:
+        published = None
+    if published is not None:
         assets = {asset['name'] for asset in published['assets'] if asset['size'] > 0}
         if published['isDraft'] or not (expected | {'SHA256SUMS.txt'}) <= assets:
             raise SystemExit(f'{tag} exists without a complete published release; inspect it before retrying')
-        message = f'{tag} is already published; keeping the existing release. Update version.properties and Protocol.java to publish a new version. {published["url"]}'
+        message = f'{tag} is already published; keeping the existing release. Bump version.properties and Protocol.java and push a new tag to publish a new version. {published["url"]}'
         print(message)
         summary = os.environ.get('GITHUB_STEP_SUMMARY')
         if summary:

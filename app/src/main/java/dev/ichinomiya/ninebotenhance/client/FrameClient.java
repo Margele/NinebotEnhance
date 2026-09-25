@@ -810,9 +810,6 @@ public final class FrameClient {
         Bundle args = new Bundle(); args.putBoolean("refresh", refresh);
         metadataCall(Protocol.UPDATE_CHECK, args, done, failed);
     }
-    /** The release version the user chose not to be asked about again. */
-    public String ignoredUpdate() { return context == null ? "" : context.getSharedPreferences(Protocol.MODULE + ".widgets", Context.MODE_PRIVATE).getString("update_ignored", ""); }
-    public void ignoreUpdate(String version) { if (context != null) context.getSharedPreferences(Protocol.MODULE + ".widgets", Context.MODE_PRIVATE).edit().putString("update_ignored", version).apply(); }
     public long replacementCount() { synchronized (frameLock) { return replacements; } }
     public boolean readyFor(String request) { synchronized (frameLock) { return request.equals(ownerRequest) && ready(); } }
     public boolean captureActiveFor(String request) { return request.equals(ownerRequest) && active && SystemClock.elapsedRealtime() - lastPoll < 4000; }

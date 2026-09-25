@@ -402,17 +402,11 @@ public final class DirectCastController implements Application.ActivityLifecycle
     private void promptUpdate(Activity activity) {
         Bundle known = update; if (known == null || !known.getBoolean("newer")) return;
         String version = known.getString("latest", ""), url = known.getString("url", UpdateCheck.RELEASES_URL);
-        if (version.isEmpty() || version.equals(updatePrompted) || version.equals(frames.ignoredUpdate()) || !injector.rowIn(activity)) return;
+        if (version.isEmpty() || version.equals(updatePrompted) || !injector.rowIn(activity)) return;
         updatePrompted = version; frames.report("UPDATE prompt " + version);
-        new AlertDialog.Builder(activity).setTitle("发现新版本 " + version).setMessage("当前 " + Protocol.VERSION + "，最新 " + version)
-                .setPositiveButton("打开 Releases", (d, w) -> openUrl(activity, url))
-                .setNeutralButton("忽略此版本", (d, w) -> frames.ignoreUpdate(version))
-                .setNegativeButton("关闭", null).show();
+        UpdateDialog.show(activity, new MirrorUi(activity, reference(activity, null)), version, url);
     }
-    private void openUrl(Activity activity, String url) {
-        try { activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); }
-        catch (RuntimeException e) { toast(activity, "没有可打开链接的应用"); }
-    }
+    private void openUrl(Activity activity, String url) { UpdateDialog.open(activity, url); }
     // ---------------------------------------------------------------- input injection refused
     private void inputDenied(String error) {
         if (inputDeniedPrompted) return;

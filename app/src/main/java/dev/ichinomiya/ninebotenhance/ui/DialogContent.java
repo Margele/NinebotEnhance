@@ -12,9 +12,17 @@ final class DialogContent {
         text.setLineSpacing(MirrorUi.dp(activity, 3), 1); return text;
     }
     static AlertDialog create(Activity activity, MirrorUi theme, String heading, View body) {
+        return new AlertDialog.Builder(activity).setCustomTitle(title(activity, theme, heading)).setView(body).setPositiveButton("关闭", null).create();
+    }
+    /** A dialog with one action next to the close button; the action runs and the dialog closes. */
+    static AlertDialog create(Activity activity, MirrorUi theme, String heading, View body, String action, Runnable onAction) {
+        return new AlertDialog.Builder(activity).setCustomTitle(title(activity, theme, heading)).setView(body)
+                .setPositiveButton(action, (d, w) -> onAction.run()).setNegativeButton("关闭", null).create();
+    }
+    private static TextView title(Activity activity, MirrorUi theme, String heading) {
         TextView title = text(activity, theme, heading, 20);
         title.setPadding(title.getPaddingLeft(), MirrorUi.dp(activity, 20), title.getPaddingRight(), MirrorUi.dp(activity, 12));
-        return new AlertDialog.Builder(activity).setCustomTitle(title).setView(body).setPositiveButton("关闭", null).create();
+        return title;
     }
     static void show(Activity activity, MirrorUi theme, AlertDialog dialog) {
         dialog.show();

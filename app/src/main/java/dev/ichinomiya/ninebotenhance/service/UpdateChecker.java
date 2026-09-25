@@ -33,7 +33,7 @@ public final class UpdateChecker {
         String latest = p.getString("latest", ""), url = p.getString("url", UpdateCheck.RELEASES_URL);
         Bundle result = new Bundle();
         result.putString("current", Protocol.VERSION); result.putString("latest", latest); result.putString("url", url);
-        result.putLong("checked_at", checked);
+        result.putLong("checked_at", checked); result.putLong("failed_at", failed);
         result.putBoolean("newer", !latest.isEmpty() && UpdateCheck.newer(latest, Protocol.VERSION));
         boolean stale = now - checked >= UpdateCheck.INTERVAL_MS && now - failed >= UpdateCheck.RETRY_MS;
         if ((force || stale) && !running) { running = true; new Thread(this::check, "Enhance-Update").start(); }

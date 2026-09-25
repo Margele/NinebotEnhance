@@ -31,16 +31,22 @@ class PublishReleaseTests(unittest.TestCase):
         (self.folder / 'SHA256SUMS.txt').write_text(''.join(
             release.sha256(self.folder / name) + '  ' + name + '\n' for name in self.names))
         self.enterContext(patch.object(release, 'ROOT', self.root))
-        self.enterContext(patch.object(release, 'git', return_value=self.commit))
+        def resolve(*args):
+            # HEAD is the checked-out release commit; "<sha>^{commit}" peels a tag to the commit it names.
+            if args[0] == 'rev-parse' and args[1].endswith('^{commit}'):
+                return args[1][:-len('^{commit}')]
+            return self.commit
+        self.enterContext(patch.object(release, 'git', side_effect=resolve))
         self.enterContext(patch.dict(os.environ, {
-            'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': 'refs/heads/main',
+            'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': 'refs/tags/v1.0.0',
             'GITHUB_REPOSITORY': 'owner/project', 'GITHUB_SHA': self.commit,
         }, clear=True))
-        self.query = self.enterContext(patch.object(release.subprocess, 'check_output', return_value='[]'))
+        missing = release.subprocess.CalledProcessError(1, 'gh')
+        self.query = self.enterContext(patch.object(release.subprocess, 'check_output', side_effect=missing))
         self.publish = self.enterContext(patch.object(release.subprocess, 'run'))
         self.enterContext(contextlib.redirect_stdout(io.StringIO()))
 
-    def test_main_push_publishes_version_and_all_files(self):
+    def test_tag_push_publishes_version_and_all_files(self):
         release.main()
         command = self.publish.call_args.args[0]
         self.assertEqual(command[:4], ['gh', 'release', 'create', 'v1.0.0'])
@@ -48,14 +54,14 @@ class PublishReleaseTests(unittest.TestCase):
         self.assertEqual(set(command[-4:]), {str(self.folder / name) for name in self.names + ['SHA256SUMS.txt']})
         self.assertNotIn('--prerelease', command)
 
-    def test_manual_main_publishes_without_opt_in(self):
+    def test_manual_tag_run_publishes(self):
         os.environ['GITHUB_EVENT_NAME'] = 'workflow_dispatch'
         release.main()
         self.publish.assert_called_once()
 
-    def test_other_events_and_branches_cannot_publish(self):
-        for event, ref in [('pull_request', 'refs/heads/main'), ('push', 'refs/heads/feature'),
-                           ('workflow_dispatch', 'refs/tags/v1.0.0')]:
+    def test_branches_other_events_and_wrong_tags_cannot_publish(self):
+        for event, ref in [('pull_request', 'refs/tags/v1.0.0'), ('push', 'refs/heads/main'), ('push', 'refs/heads/feature'),
+                           ('workflow_dispatch', 'refs/heads/main'), ('push', 'refs/tags/v1.0.1'), ('push', 'refs/tags/1.0.0')]:
             with self.subTest(event=event, ref=ref), patch.dict(os.environ, {'GITHUB_EVENT_NAME': event, 'GITHUB_REF': ref}):
                 with self.assertRaises(SystemExit):
                     release.main()
@@ -77,7 +83,7 @@ class PublishReleaseTests(unittest.TestCase):
         self.publish.assert_not_called()
 
     def test_existing_release_is_kept(self):
-        self.query.side_effect = [json.dumps([{'ref': 'refs/tags/v1.0.0'}]), json.dumps({
+        self.query.side_effect = [json.dumps({
             'isDraft': False, 'url': 'https://github.com/owner/project/releases/tag/v1.0.0',
             'assets': [{'name': name, 'size': 1} for name in self.names + ['SHA256SUMS.txt']],
         })]
@@ -85,7 +91,7 @@ class PublishReleaseTests(unittest.TestCase):
         self.publish.assert_not_called()
 
     def test_incomplete_existing_release_fails(self):
-        self.query.side_effect = [json.dumps([{'ref': 'refs/tags/v1.0.0'}]), json.dumps({
+        self.query.side_effect = [json.dumps({
             'isDraft': False, 'assets': [], 'url': 'https://github.com/owner/project/releases/tag/v1.0.0',
         })]
         with self.assertRaises(SystemExit):
