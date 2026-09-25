@@ -83,6 +83,9 @@ public final class CoreTests {
         check(capped.width()==4096&&capped.height()==2816&&capped.dpi()==700,"oversize plans shrink to the 4096 side limit keeping the phone density");
         check(keep.renderPlan(160)==null&&keep.renderPlan(0)==null&&off.renderPlan(520)==null,"no override when the density already matches, is unknown or the option is off");
         check(keep.withFrame(636,360).keepPhoneDpi&&!off.withFrame(636,360).keepPhoneDpi&&keep.label().contains("保持手机 DPI")&&!off.label().contains("保持"),"the option survives reframing and shows in the label");
+        DisplaySettings compat=keep.withCompatScale(true);
+        check(!keep.compatScale&&compat.compatScale&&keep.withCompatScale(false)==keep&&compat.withFrame(636,360).compatScale&&compat.label().contains("兼容缩放")&&!keep.label().contains("兼容"),"compat scaling is off by default, survives reframing and shows in the label");
+        check(DisplaySettings.read((k,f)->k.equals("layout_version")?DisplaySettings.LAYOUT_VERSION:k.equals("compat_scale")?1:f).compatScale&&!DisplaySettings.read((k,f)->k.equals("layout_version")?DisplaySettings.LAYOUT_VERSION:f).compatScale,"compat scaling round-trips through the settings store");
         check(d.lightBackgroundColor==DisplaySettings.DEFAULT_LIGHT_BACKGROUND_COLOR&&d.background(true)==d.backgroundColor&&d.background(false)==d.lightBackgroundColor&&keep.withFrame(636,360).lightBackgroundColor==d.lightBackgroundColor,"each dashboard theme has its own frame background");
         rejects(()->new DisplaySettings(848,480,640,440,160,0xff242424,true,0x80ffffff),"transparent light background rejected");
         dev.ichinomiya.ninebotenhance.core.HudPalette dark=dev.ichinomiya.ninebotenhance.core.HudPalette.DARK,light=dev.ichinomiya.ninebotenhance.core.HudPalette.LIGHT;

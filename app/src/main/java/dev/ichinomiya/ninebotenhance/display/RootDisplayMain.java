@@ -66,8 +66,7 @@ public final class RootDisplayMain {
     private String resumeUri;private int resumePolls;
     private static final long RESUME_POLL_MS=500,RESUME_SETTLE_MS=2500;private static final int RESUME_POLLS=40;
 
-    /** Compat scaling: the display is created at the capture size and render density the client chose; nothing is forced later. */
-    /** Keep-DPI: the display is created at this size and density and the capture path scales it into the app area. */
+    /** Keep-DPI with compat scaling: the display is created at this size and density and the capture path scales it into the app area. Without it applyRenderPlan forces the logical size instead. */
     private int renderDpi, captureWidth, captureHeight; private boolean scaledRender;
     public static void main(String[] args) {
         if (args.length != 1 || !Protocol.validRequest(args[0])) System.exit(2);
@@ -126,11 +125,11 @@ public final class RootDisplayMain {
         if (surface == null || !surface.isValid()) throw new IllegalStateException("接收 Surface 已关闭");
         Constructor<DisplayManager> constructor = DisplayManager.class.getDeclaredConstructor(Context.class); constructor.setAccessible(true);
         DisplayManager manager = constructor.newInstance(context);
-        if (settings.keepPhoneDpi) {
-            // Keep-DPI: the display is created at the phone's density and the plan's logical size. The surface the client created
-            // is already plan sized; the display must be created at exactly that size, or the system paints a small display into
-            // the top-left corner of the large buffer. WindowManager's forced size/density is not used: shell often lacks
-            // WRITE_SECURE_SETTINGS and the capture path scales the picture back anyway.
+        if (settings.keepPhoneDpi && settings.compatScale) {
+            // Keep-DPI, compat scaling: the display is created at the phone's density and the plan's logical size. The surface the
+            // client created is already plan sized; the display must be created at exactly that size, or the system paints a small
+            // display into the top-left corner of the large buffer. Without compat scaling the display is created at the buffer size
+            // and applyRenderPlan forces the logical size and density through WindowManager after creation.
             if (renderDpi > 0 && captureWidth > 0 && captureHeight > 0) scaledRender = true;
             else {
                 DisplaySettings.RenderPlan plan = settings.renderPlan(phoneDensityDpi(manager));
@@ -191,6 +190,13 @@ public final class RootDisplayMain {
         log("DISPLAY created id=" + displayId + " buffer=" + settings.label() + " flags=0x" + Integer.toHexString(flags) + " sharedMemory=" + sharedMemoryStatus);
         if (scaledRender) log("RENDER logical=" + captureWidth + "x" + captureHeight + " dpi=" + renderDpi + " scaled by the capture path into "
                 + settings.virtualWidth + "x" + settings.virtualHeight + " layoutDpi=" + settings.dpi);
+        else try { applyRenderPlan(manager); }
+        catch (Exception e) {
+            // Some ROMs deny WRITE_SECURE_SETTINGS to shell: this session keeps the buffer size and layout density, exactly as with
+            // keep-DPI off, and the module switches compat scaling on for the next one.
+            log("RENDER unavailable, keeping buffer size and layout density: " + Ipc.error(e)); clearRenderPlan();
+            try { providerCall("render_fallback", new Bundle()); } catch (Exception ignored) {}
+        }
         try {
             displayOrientation = new RootDisplayOrientation(display.getDisplay(), this::log);
             displayOrientation.start();
@@ -517,6 +523,46 @@ public final class RootDisplayMain {
         if (surface != null) { surface.release(); surface = null; }
         try { Class.forName("android.app.IActivityManager").getMethod("removeContentProviderExternal", String.class, IBinder.class)
                 .invoke(activityManager, Protocol.ROOT_AUTHORITY, providerToken); } catch (Exception ignored) {}
+    }
+    /**
+     * Keep-DPI without compat scaling: the display renders at the phone's density with a proportionally larger logical size, so a
+     * navigation app moving between the phone and this display never sees a density change. WindowManager's forced size and density
+     * change the logical display only; the physical size stays the RGBA buffer and DisplayManager's letterbox projection scales the
+     * content back into it at no cost to the module. WindowManager creates its DisplayContent from the display-added event after
+     * createVirtualDisplay returns, so the override is retried until the display reports it. Needs WRITE_SECURE_SETTINGS: root has
+     * it, shell not on every ROM.
+     */
+    private void applyRenderPlan(DisplayManager manager) throws Exception {
+        if (!settings.keepPhoneDpi) return;
+        int phoneDpi = phoneDensityDpi(manager);
+        DisplaySettings.RenderPlan plan = settings.renderPlan(phoneDpi);
+        if (plan == null) { log("RENDER phoneDpi=" + phoneDpi + " needs no override"); return; }
+        Object windowManager = Class.forName("android.view.WindowManagerGlobal").getMethod("getWindowManagerService").invoke(null);
+        Class<?> api = Class.forName("android.view.IWindowManager");
+        Method size = api.getMethod("setForcedDisplaySize", int.class, int.class, int.class);
+        Method density = api.getMethod("setForcedDisplayDensityForUser", int.class, int.class, int.class);
+        int user = moduleUid / 100000;
+        long deadline = SystemClock.elapsedRealtime() + 3000; Point actual = new Point(); android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
+        while (true) {
+            size.invoke(windowManager, displayId, plan.width(), plan.height()); density.invoke(windowManager, displayId, plan.dpi(), user);
+            Display target = display.getDisplay(); target.getRealSize(actual); target.getRealMetrics(metrics);
+            if (actual.x == plan.width() && actual.y == plan.height() && metrics.densityDpi == plan.dpi()) break;
+            if (SystemClock.elapsedRealtime() > deadline)
+                throw new IllegalStateException("系统未接受保持 DPI 的渲染尺寸：" + actual.x + "x" + actual.y + "@" + metrics.densityDpi
+                        + "，需要 " + plan.width() + "x" + plan.height() + "@" + plan.dpi());
+            Thread.sleep(100);
+        }
+        log("RENDER forced logical=" + plan.width() + "x" + plan.height() + " dpi=" + plan.dpi() + " buffer=" + settings.virtualWidth + "x" + settings.virtualHeight
+                + " layoutDpi=" + settings.dpi + " phoneDpi=" + phoneDpi);
+    }
+    /** Undo a partially applied render plan so the display is left at its buffer size; failures here are already reported. */
+    private void clearRenderPlan() {
+        try {
+            Object windowManager = Class.forName("android.view.WindowManagerGlobal").getMethod("getWindowManagerService").invoke(null);
+            Class<?> api = Class.forName("android.view.IWindowManager");
+            try { api.getMethod("clearForcedDisplaySize", int.class).invoke(windowManager, displayId); } catch (Exception ignored) {}
+            try { api.getMethod("clearForcedDisplayDensityForUser", int.class, int.class).invoke(windowManager, displayId, moduleUid / 100000); } catch (Exception ignored) {}
+        } catch (Exception ignored) {}
     }
     private static int phoneDensityDpi(DisplayManager manager) {
         Display phone = manager.getDisplay(Display.DEFAULT_DISPLAY);

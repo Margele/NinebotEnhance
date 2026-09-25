@@ -1,4 +1,8 @@
+import dev.ichinomiya.ninebotenhance.core.CanopyLampProtocol;
+import dev.ichinomiya.ninebotenhance.core.EscLampProtocol;
+import dev.ichinomiya.ninebotenhance.core.LampKind;
 import dev.ichinomiya.ninebotenhance.core.LampSettings;
+import dev.ichinomiya.ninebotenhance.core.SgLampProtocol;
 import dev.ichinomiya.ninebotenhance.core.LampState;
 import dev.ichinomiya.ninebotenhance.core.SidebarLayout;
 import dev.ichinomiya.ninebotenhance.core.TxLampProtocol;
@@ -71,6 +75,61 @@ final class LampTests {
         CoreTests.check(stack.lamp()!=null&&stack.lamp().bottom()==SidebarLayout.BOTTOM&&stack.lamp().height()==SidebarLayout.LAMP_HEIGHT
                 &&stack.lamp().width()==120&&stack.lamp().right()==SidebarLayout.RIGHT&&stack.of(WidgetSettings.LAMP)==stack.lamp(),"the lamp card sits at the bottom right at its measured width");
         CoreTests.check(SidebarLayout.arrange(shown,0,0,new SidebarLayout.Sizes(100,190,100,190),false).lamp()==null,"a hidden lamp card takes no room");
+        otherControllers();
+    }
+    /** The 摩灯客 ESC and canopy controllers and the SG lift: frames, replies and the settings that drive them. */
+    private static void otherControllers(){
+        // ESC: AA55 "0001" type data CRC16(Modbus, high first) 0D0A.
+        CoreTests.check(EscLampProtocol.crc16("123456789".getBytes(java.nio.charset.StandardCharsets.US_ASCII),0,9)==0x4B37,"the CRC is Modbus CRC16 (check value 4B37)");
+        byte[] slide=EscLampProtocol.moveTo("123456",50);
+        CoreTests.check(slide.length==19&&(slide[0]&0xff)==0xAA&&slide[1]==0x55&&slide[2]=='0'&&slide[5]=='1'&&(slide[6]&0xff)==0xA3
+                &&slide[7]=='1'&&slide[12]=='6'&&slide[13]==3&&slide[14]==50&&slide[17]==0x0D&&slide[18]==0x0A,"the slide command carries the ASCII password, direction 3 and the height: "+hex(slide));
+        int crc=EscLampProtocol.crc16(slide,0,15);
+        CoreTests.check((slide[15]&0xff)==(crc>>8)&&(slide[16]&0xff)==(crc&0xff),"the CRC covers the header through the data, high byte first");
+        CoreTests.check(Arrays.equals(EscLampProtocol.query(),EscLampProtocol.frame(0xA9))&&EscLampProtocol.query().length==11,"the firmware query has no data and no password");
+        EscLampProtocol.Response ack=EscLampProtocol.parse(EscLampProtocol.frame(0xEE,(byte)0xA3,(byte)1));
+        CoreTests.check(ack!=null&&ack.type()==0xEE&&EscLampProtocol.accepted(ack,0xA3)&&EscLampProtocol.receipt(ack,0xA3)&&!EscLampProtocol.accepted(ack,0xA0)&&!EscLampProtocol.receipt(ack,0xA0),"an EE receipt names the command it answers and whether it was accepted");
+        EscLampProtocol.Response refused=EscLampProtocol.parse(EscLampProtocol.frame(0xEE,(byte)0xA3,(byte)0));
+        CoreTests.check(refused!=null&&EscLampProtocol.receipt(refused,0xA3)&&!EscLampProtocol.accepted(refused,0xA3),"a receipt with result 0 is a refusal");
+        byte[] info=EscLampProtocol.frame(0xB9,bytes(1,2,3,1,0,7));
+        CoreTests.check(EscLampProtocol.parse(info).type()==0xB9&&EscLampProtocol.parse(info).data().length==6,"the firmware answer parses with its data");
+        byte[] corrupt=info.clone();corrupt[8]^=1;
+        byte[] noTail=info.clone();noTail[noTail.length-1]=0;
+        CoreTests.check(EscLampProtocol.parse(corrupt)==null&&EscLampProtocol.parse(noTail)==null&&EscLampProtocol.parse(bytes(0xAA,0x55,0x30))==null&&EscLampProtocol.parse(null)==null,"a bad CRC, a missing tail, a short buffer and no buffer are all dropped");
+        CoreTests.rejects(()->EscLampProtocol.moveTo("12345",50),"a five character ESC password is rejected");
+        CoreTests.rejects(()->EscLampProtocol.moveTo("123456",101),"an ESC height above 100 is rejected");
+        CoreTests.check(EscLampProtocol.validPassword("12ab56")&&!EscLampProtocol.validPassword("12 456")&&!EscLampProtocol.validPassword(null),"the ESC password is six printable characters");
+        // Canopy: B3 len cmd data ck, bare CC position.
+        CoreTests.check(Arrays.equals(CanopyLampProtocol.frame(0x10,(byte)2),bytes(0xB3,0x05,0x10,0x02,0xCA)),"the framed command matches the vendor example B3 05 10 02 CA");
+        CoreTests.check(Arrays.equals(CanopyLampProtocol.queryConfig(),bytes(0xB3,0x05,0x1D,0x00,0xD5)),"the configuration query is 0x1D with one zero byte");
+        CoreTests.check(Arrays.equals(CanopyLampProtocol.moveTo(15),bytes(0xCC,0x0F))&&Arrays.equals(CanopyLampProtocol.moveTo(0),bytes(0xCC,0)),"the position command is the bare CC pair");
+        CoreTests.rejects(()->CanopyLampProtocol.moveTo(30),"a canopy position above 29 is rejected");
+        byte[] status=CanopyLampProtocol.frame(0x20,bytes(12,1,0,0));
+        byte[] config=CanopyLampProtocol.frame(0x21,bytes(0,1,2,3,1,2,3,0,0,0,9,7));
+        CoreTests.check(CanopyLampProtocol.position(status)==12&&CanopyLampProtocol.position(config)==7,"the status frame carries the position in byte 3 and the configuration answer in byte 14");
+        CoreTests.check(CanopyLampProtocol.position(CanopyLampProtocol.frame(0x22,bytes(26,9,25)))==-1&&CanopyLampProtocol.position(bytes(0xB3,0x09,0x20))==-1&&CanopyLampProtocol.position(bytes(0xCC,5))==-1&&CanopyLampProtocol.position(null)==-1,"other frames, a truncated frame and no frame carry no position");
+        CoreTests.check(CanopyLampProtocol.position(CanopyLampProtocol.frame(0x20,bytes(40,0,0,0)))==-1,"a position past the travel is not believed");
+        // SG: plain bytes, jog heartbeats and an explicit stop.
+        CoreTests.check(Arrays.equals(SgLampProtocol.jog(1,100),bytes(0xA1,1,1,0,0,0,3,0x64,0x1F))&&Arrays.equals(SgLampProtocol.jog(2,50),bytes(0xA1,2,1,0,0,0,3,0x32,0x1F)),"a jog names its direction and PWM");
+        CoreTests.check(Arrays.equals(SgLampProtocol.stop(),bytes(0xA1,1,2,0,0,0,1,0x1F))&&Arrays.equals(SgLampProtocol.init(),bytes(0xAF,1,2,3,4,5,6,0xFF)),"the stop and session frames are the vendor constants");
+        CoreTests.rejects(()->SgLampProtocol.jog(3,80),"a third jog direction is rejected");
+        CoreTests.rejects(()->SgLampProtocol.jog(1,49),"a PWM under 50 is rejected");
+        CoreTests.check(SgLampProtocol.clampPwm(10)==50&&SgLampProtocol.clampPwm(200)==100&&SgLampProtocol.clampPwm(75)==75,"the PWM is clamped to 50–100");
+        CoreTests.check(SgLampProtocol.lampName("JUXUN-01")&&SgLampProtocol.lampName("juxun")&&!SgLampProtocol.lampName("MOTORE")&&!SgLampProtocol.lampName(null),"the SG scan matches JUXUN in any case");
+        CoreTests.check(SgLampProtocol.motor(bytes(0xFE,0,5,0,0,0,0,0,0,0x11,0x10))==1&&SgLampProtocol.motor(bytes(0xFE,0,0,0,0,0,0,0,0,0x22,0x20))==2&&SgLampProtocol.motor(bytes(0xFE,0,0,0,0,0,0,0,0,0x20,0x20))==0&&SgLampProtocol.motor(bytes(0xAF,0xA2,7))==-1,"the FE frame says whether the motor runs and which way");
+        CoreTests.check(SgLampProtocol.connected(bytes(0xAF,0xA2,7))&&!SgLampProtocol.connected(bytes(0xFE))&&SgLampProtocol.alarm(bytes(0xD1,1))&&!SgLampProtocol.alarm(bytes(0xD1,0)),"AF opens the session and D1 01 is the stall alarm");
+        // Settings per kind.
+        CoreTests.check(LampKind.of(2)==LampKind.CANOPY&&LampKind.of(99)==LampKind.TX&&LampKind.TX.needsPassword()&&LampKind.ESC.needsPassword()&&!LampKind.CANOPY.needsPassword()&&!LampKind.SG.needsPassword(),"kinds resolve by id and know whether they take a password");
+        CoreTests.check(LampKind.CANOPY.singleCharacteristic()&&LampKind.SG.singleCharacteristic()&&!LampKind.TX.singleCharacteristic()&&!LampKind.ESC.singleCharacteristic(),"the canopy and SG share one characteristic for both directions");
+        CoreTests.check(LampKind.TX.matches("MOTORE123",false)&&!LampKind.TX.matches("x",true)&&LampKind.SG.matches("JUXUN",false)&&LampKind.ESC.matches("大灯@01",false)&&LampKind.ESC.matches("x",true)&&LampKind.CANOPY.matches("x",true)&&!LampKind.CANOPY.matches("x",false),"each kind matches by its name or its advertised service");
+        LampSettings sg=new LampSettings("A1:B2:C3:D4:E5:F6","",10,8,false,true,LampKind.SG,1000);
+        CoreTests.check(sg.bound()&&!sg.kind().positional&&sg.pwm()==50&&sg.jogMs()==1000&&new LampSettings("A1:B2:C3:D4:E5:F6","",20,8,false,true,LampKind.SG,0).jogMs()==LampSettings.MIN_JOG_MS,"an SG binding needs no password, maps the speed onto the PWM and clamps the run time");
+        LampSettings canopy=new LampSettings("A1:B2:C3:D4:E5:F6","",10,8,false,true,LampKind.CANOPY,1000);
+        CoreTests.check(canopy.bound()&&canopy.top(0,29)==29&&canopy.displayPercent(29,0,29)==100&&canopy.displayPercent(15,0,29)==52&&canopy.stepUnits(0,29)==4,"the canopy travel of thirty positions maps onto 100% with no top margin");
+        LampSettings esc=new LampSettings("A1:B2:C3:D4:E5:F6","12ab56",10,8,false,true,LampKind.ESC,1000);
+        CoreTests.check(esc.bound()&&esc.top(0,100)==100&&esc.displayPercent(100,0,100)==100&&esc.stepUnits(0,100)==13&&!new LampSettings("A1:B2:C3:D4:E5:F6","12345",10,8,false,true,LampKind.ESC,1000).bound(),"an ESC binding takes any six characters and uses the whole 0–100 travel");
+        CoreTests.check(new LampSettings("A1:B2:C3:D4:E5:F6","123456",10,8,false,true).kind()==LampKind.TX&&new LampSettings("A1:B2:C3:D4:E5:F6","123456",10,8,false,true).jogMs()==LampSettings.DEFAULT_JOG_MS,"an old style binding is a TX one");
+        CoreTests.check(new LampSettings("A1:B2:C3:D4:E5:F6","123456",10,8,false,true,null,1000).kind()==LampKind.TX,"a missing kind reads as TX");
     }
     private static String hex(byte[] data){StringBuilder b=new StringBuilder();for(byte v:data)b.append(String.format(java.util.Locale.ROOT,"%02X ",v));return b.toString().trim();}
 }

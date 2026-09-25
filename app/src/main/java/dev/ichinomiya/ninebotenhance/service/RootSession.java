@@ -55,6 +55,8 @@ public final class RootSession {
     private String backend = "未启动";
     /** The daemon's first injection refusal this session (INJECT_EVENTS), surfaced to the host so it can guide the user once. */
     private String inputDenied = "";
+    /** WindowManager refused the forced logical size this session; compat scaling is already persisted for the next one. */
+    private boolean renderFallback;
     private volatile String previousExit = "系统退出记录尚未读取";
     private long lastInputError;
     private int appRecovery;
@@ -108,7 +110,7 @@ public final class RootSession {
             context.getSharedPreferences("virtual_display", 0).edit().putInt("width", value.width)
                     .putInt("height",value.height).putInt("dpi",value.dpi)
                     .putInt("layout_version",DisplaySettings.LAYOUT_VERSION).putInt("virtual_width",value.virtualWidth).putInt("virtual_height",value.virtualHeight)
-                    .putInt("background_color",value.backgroundColor).putInt("keep_phone_dpi",value.keepPhoneDpi?1:0).putInt("virtual_override",value.virtualOverride?1:0).putInt("light_background_color",value.lightBackgroundColor).putInt("bottom_inset",value.bottomInset).remove("top_inset").remove("top_color")
+                    .putInt("background_color",value.backgroundColor).putInt("keep_phone_dpi",value.keepPhoneDpi?1:0).putInt("compat_scale",value.compatScale?1:0).putInt("virtual_override",value.virtualOverride?1:0).putInt("light_background_color",value.lightBackgroundColor).putInt("bottom_inset",value.bottomInset).remove("top_inset").remove("top_color")
                     .putString(AppCatalog.SELECTED, app.flattenToString()).apply();
         }
     }
@@ -134,7 +136,7 @@ public final class RootSession {
             if (android.os.Process.myUid() / 100000 != 0) { output.release(); throw new IllegalStateException("此版本仅支持手机主用户"); }
             if (!lease.begin(request, secret)) { output.release(); throw new IllegalStateException("已有投屏正在运行"); }
             current = requested; launchApp = app; surface = output; owner = client; ownerUid = uid; root = null; displayId = -1;
-            appRecovery = AppRecoveryState.HIDDEN; appRecoveryAt = 0; appRecoveryDetail = ""; touchPresent = false; inputDenied = "";
+            appRecovery = AppRecoveryState.HIDDEN; appRecoveryAt = 0; appRecoveryDetail = ""; touchPresent = false; inputDenied = ""; renderFallback = false;
             appLayoutPolicy = "not-created";
             lastRequest = request; backend = "正在选择授权方式"; state = backend;
             ownerDeath = () -> stop(request, "九号进程已退出");
@@ -203,6 +205,11 @@ public final class RootSession {
             } else if ("touch_state".equals(method)) {
                 boolean present = args.getBoolean("present");
                 if (present != touchPresent) { touchPresent = present; Diagnostics.add("TOUCH panel " + (present ? "present" : "absent")); }
+            } else if ("render_fallback".equals(method)) {
+                // The ROM denied the forced size/density to the daemon: this session runs at the buffer size, and keep-DPI takes the
+                // compat scaling path from the next session on. The setting is flipped for real, so the dialog shows it checked.
+                renderFallback = true; context.getSharedPreferences("virtual_display", 0).edit().putInt("compat_scale", 1).apply();
+                Diagnostics.add("ROOT RENDER fallback reported; compat scaling switched on for the next session");
             } else if ("input_denied".equals(method)) {
                 inputDenied = LogDigest.head(args.getString("error", ""), 360); Diagnostics.add("INPUT denied by the system: " + inputDenied);
             } else if ("error".equals(method)) {
@@ -226,6 +233,7 @@ public final class RootSession {
         result.putString(Protocol.APP_LAYOUT_POLICY, appLayoutPolicy);
         result.putBoolean("touch_bound", touchPanel().bound()); result.putBoolean("touch_present", touchPresent && lease.request() != null);
         result.putString("input_denied", lease.request() != null ? inputDenied : "");
+        result.putBoolean("render_fallback", renderFallback && lease.request() != null);
         result.putString(AppCatalog.SELECTED, launchApp == null ? "" : launchApp.flattenToString());
         boolean recent = appRecoveryAt != 0 && SystemClock.elapsedRealtime() - appRecoveryAt < 5000 && lease.isReady();
         result.putInt(Protocol.APP_RECOVERY, recent ? appRecovery : AppRecoveryState.HIDDEN);

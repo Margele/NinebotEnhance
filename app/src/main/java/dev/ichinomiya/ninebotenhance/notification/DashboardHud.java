@@ -380,7 +380,7 @@ public final class DashboardHud {
     private void drawPower(Canvas c,long now,SidebarLayout.Box box){
         drawMetric(c,now,box,"功率",powerFromBms(now)?String.valueOf(bms.data().watts()):powerExpired(now)?"--":String.valueOf(ride.power()),"W",powerHistory,widgets.enabled(WidgetSettings.POWER_CHART),widgets.powerChartWindowMs(),0,50f);
     }
-    /** Height the hoist reported, or why it is not reporting one; the module never estimates a position locally. */
+    /** Height the device reported (or, for the ESC, was last sent), 已连接 for a timed lift that has none, otherwise 未连接. */
     private void drawLamp(Canvas c,SidebarLayout.Box box){
         float left=box.left(),contentLeft=left+INSET;boolean known=lamp.knownPosition()&&lampPercent>=0;
         surface(c,left,0,box.right()-left,SidebarLayout.LAMP_HEIGHT,11);
@@ -400,7 +400,7 @@ public final class DashboardHud {
     /** The BMS card: its rows from the layout while a fresh reading exists, otherwise one line reading 未连接. */
     private void drawBms(Canvas c,long now,SidebarLayout.Box box){bmsPainter.draw(c,p,box.left(),box.width(),bmsLayout,bms.data(),bmsFresh(now));}
     private float bmsHeight(long now){return bmsPainter.height(bmsLayout,bmsFresh(now));}
-    private String lampText(){return lamp.knownPosition()&&lampPercent>=0?String.valueOf(lampPercent):"未连接";}
+    private String lampText(){return lamp.knownPosition()&&lampPercent>=0?String.valueOf(lampPercent):lamp.ready()?"已连接":"未连接";}
     private float lampWidth(){
         boolean known=lamp.knownPosition()&&lampPercent>=0;String value=lampText();
         return 2*INSET+VALUE_COLUMN+measure(value,known?17:13,known)+(known?4+measure("%",11,false):0);
