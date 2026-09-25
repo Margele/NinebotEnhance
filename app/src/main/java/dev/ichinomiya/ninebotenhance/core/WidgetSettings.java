@@ -159,11 +159,12 @@ public record WidgetSettings(int mask,int tyreIntervalSeconds,int voltageInterva
     public boolean showsTyres(){return enabled(TYRES)&&(enabled(TYRE_FRONT)||enabled(TYRE_REAR));}
     /** Tyres and voltage are read whenever their card is shown or a condition needs them; TYRE_READ and VOLTAGE_READ survive in stored masks but no longer gate anything. */
     public boolean readsTyres(){return showsTyres()||conditionsUse(WidgetCondition.TYRE_CHECKS);}
-    public boolean readsVoltage(){return enabled(VOLTAGE)||conditionsUse(WidgetCondition.VOLTAGE);}
+    /** With the BMS as the voltage source the vehicle register is left alone; the card and its conditions read the board instead. */
+    public boolean readsVoltage(){return !enabled(VOLTAGE_FROM_BMS)&&(enabled(VOLTAGE)||conditionsUse(WidgetCondition.VOLTAGE));}
     /** Speed and power are read for their own cards, for hill-hold detection and for conditions that check them. */
     public boolean readsSpeed(){return enabled(SPEED)||enabled(HILL_HOLD_DODGE)||conditionsUse(WidgetCondition.SPEED);}
-    /** The vehicle power register is read whenever anything needs it; hill hold always does, whatever the BMS priority option says. */
-    public boolean readsPower(){return enabled(POWER)||enabled(HILL_HOLD_DODGE)||conditionsUse(WidgetCondition.POWER);}
+    /** With the BMS as the power source the vehicle register is only read for hill hold, which never takes the board's value. */
+    public boolean readsPower(){return enabled(HILL_HOLD_DODGE)||!enabled(POWER_FROM_BMS)&&(enabled(POWER)||conditionsUse(WidgetCondition.POWER));}
     public long tyreLimitMs(){return tyreIntervalSeconds*1000L*TYRE_EXPIRY_FACTOR;}
     public long voltageLimitMs(){return (long)voltageIntervalMs*VOLTAGE_EXPIRY_FACTOR;}
     public long speedLimitMs(){return (long)speedIntervalMs*VOLTAGE_EXPIRY_FACTOR;}

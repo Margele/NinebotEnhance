@@ -530,6 +530,13 @@ public final class DirectCastController implements Application.ActivityLifecycle
         buttonRow(activity, layout, 12, new Button[]{widgets, drawing, encoder, hidden, touch});
         widgets.setOnClickListener(v->WidgetSettingsDialog.show(activity,frames,card));
         drawing.setOnClickListener(v->DrawSettingsDialog.show(activity,frames,card));
+        Button lamp=new Button(activity);lamp.setText("大灯管理");theme.button(lamp,null);
+        Button board=new Button(activity);board.setText("BMS 管理");theme.button(board,null);
+        Button reads=new Button(activity);reads.setText("数据读取设置");theme.button(reads,null);
+        buttonRow(activity, layout, 12, new Button[]{lamp, board, reads});
+        lamp.setOnClickListener(v->frames.lampSettings(activity,theme.dark));
+        board.setOnClickListener(v->frames.bmsSettings(activity,theme.dark));
+        reads.setOnClickListener(v->ReadSettingsDialog.show(activity,frames,card));
         encoder.setOnClickListener(v->EncoderOverrideDialog.show(activity,frames,card,!session.displayRunning()));
         hidden.setOnClickListener(v->HiddenFeatureDialog.show(activity,frames,card));
         touch.setOnClickListener(v->frames.touchSettings(activity,theme.dark));
@@ -582,6 +589,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
             PictureSource source = frames.cachedSource();
             for (View field : new View[]{appLabel,appPicker,touch,widgets})field.setVisibility(source.virtual()?View.VISIBLE:View.GONE);
             drawing.setVisibility(source.draws()?View.VISIBLE:View.GONE);
+            reads.setVisibility(source.captures()?View.GONE:View.VISIBLE);
         };
         showMode.run();
         Runnable read = () -> {

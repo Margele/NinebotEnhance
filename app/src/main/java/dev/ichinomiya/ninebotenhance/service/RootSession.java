@@ -101,6 +101,7 @@ public final class RootSession {
         data.putString(AppCatalog.SELECTED, context.getSharedPreferences("virtual_display", 0).getString(AppCatalog.SELECTED, ""));
         data.putString("privilege_mode", PrivilegeManager.mode(context).name());
         data.putString(dev.ichinomiya.ninebotenhance.core.PictureSource.KEY, PrivilegeManager.source(context).name());
+        dev.ichinomiya.ninebotenhance.notification.BmsBundle.config(data, dev.ichinomiya.ninebotenhance.bms.BmsController.get(context).settings());
         return data;
     }
     public void saveSettings(DisplaySettings value, String selected) {

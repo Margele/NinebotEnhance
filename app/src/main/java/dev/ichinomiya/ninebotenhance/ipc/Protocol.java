@@ -36,6 +36,8 @@ public final class Protocol {
     public static final int OWNER_TOUCH_MARKS = 40, OWNER_TOUCH_SAMPLE = 41;
     /** The host asks for the module's cached GitHub release lookup; a stale cache starts a fresh one. */
     public static final int UPDATE_CHECK = 42;
+    /** The bound board's poll interval, protocol and whether it is the voltage and power source; saved with {@code save}. */
+    public static final int BMS_CONFIG = 43;
     public static final String APP_RECOVERY = "appRecovery", APP_RECOVERY_DETAIL = "appRecoveryDetail";
     public static final String APP_LAYOUT_POLICY = "appLayoutPolicy";
     public static boolean validRequest(String value) { return value != null && value.matches("[a-f0-9]{32}"); }

@@ -1,5 +1,7 @@
 package dev.ichinomiya.ninebotenhance.notification;
 
+import dev.ichinomiya.ninebotenhance.core.BmsSettings;
+
 import android.os.Bundle;
 import dev.ichinomiya.ninebotenhance.core.BmsData;
 import dev.ichinomiya.ninebotenhance.core.BmsState;
@@ -24,5 +26,7 @@ public final class BmsBundle {
         return new BmsState(b.getInt("phase"),d,b.getString("detail",""));
     }
     public static int pollMs(Bundle b){return b==null?0:b.getInt("poll_ms",0);}
+    /** The board's configuration as the host sees it: poll interval, protocol and whether it is the voltage and power source. */
+    public static void config(Bundle out,BmsSettings s){out.putInt("bms_poll_ms",s.pollMs());out.putInt("bms_protocol",s.protocol());out.putBoolean("bms_prefer",s.preferBms());out.putBoolean("bms_bound",s.bound());}
     private BmsBundle(){}
 }

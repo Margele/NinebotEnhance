@@ -22,7 +22,7 @@ import java.util.function.Consumer;
  * The module's own GATT link to a protection board, in the module process on the module's own Bluetooth permissions. The DL
  * board starts every connection with the FC00 key exchange (a fresh secp256k1 pair each time, the shared secret computed
  * locally), after which FC17 is polled at the configured interval; the ANT, JBD, JK and 彦阳 boards instead take a plain read
- * command over the service and characteristic pair they advertise. Either way the link exists only while something holds it (a
+ * command over the service and characteristic pair they advertise. The protocol is the one chosen on the BMS page, never guessed. Either way the link exists only while something holds it (a
  * cast session, a visible Ninebot screen or the BMS screen); once the last hold lapses it is closed and nothing runs until the
  * next hold. A dropped link is simply reopened and the handshake repeated. Nothing is ever written to a board but read commands.
  */
@@ -49,7 +49,7 @@ public final class BmsController {
     private int writeType=BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT;
     private final long[] holds=new long[3];
     private long retryAt,lastDataAt,armedAt;private int missedPolls;
-    private int board=BmsSettings.PROTOCOL_AUTO;private BmsProtocol protocol;private byte[] followUp;
+    private int board=BmsSettings.PROTOCOL_DL;private BmsProtocol protocol;private byte[] followUp;
     private byte[] privateKey,key,iv;private byte[] inbound=new byte[512];private int inboundLength;
     private BmsController(Context context){
         this.context=context;main=new Handler(Looper.getMainLooper());
@@ -64,14 +64,14 @@ public final class BmsController {
         try{
             android.content.SharedPreferences p=context.getSharedPreferences(Protocol.MODULE+".bms",Context.MODE_PRIVATE);
             return new BmsSettings(p.getString("mac",""),p.getInt("poll_ms",BmsSettings.DEFAULT_POLL_MS),
-                    p.getInt("protocol",BmsSettings.PROTOCOL_AUTO));
+                    p.getInt("protocol",BmsSettings.PROTOCOL_DL),p.getBoolean("prefer_bms",false));
         }catch(RuntimeException e){return BmsSettings.NONE;}
     }
     public BmsSettings settings(){return settings;}
     public void save(BmsSettings value){
         BmsSettings previous=settings;settings=value;
         try{context.getSharedPreferences(Protocol.MODULE+".bms",Context.MODE_PRIVATE).edit().putString("mac",value.mac())
-                .putInt("poll_ms",value.pollMs()).putInt("protocol",value.protocol()).apply();}
+                .putInt("poll_ms",value.pollMs()).putInt("protocol",value.protocol()).putBoolean("prefer_bms",value.preferBms()).apply();}
         catch(RuntimeException ignored){}
         boolean identity=!previous.mac().equals(value.mac())||previous.protocol()!=value.protocol();
         worker.post(()->{if(identity){close("绑定已更改");retryAt=0;failures=0;}tick();});
@@ -131,7 +131,6 @@ public final class BmsController {
         inboundLength=0;mtu=DEFAULT_MTU;missedPolls=0;lastDataAt=0;armedAt=0;ready=false;
         protocol=null;followUp=null;worker.removeCallbacks(followUpRunnable);
         board=current.protocol();
-        if(board==BmsSettings.PROTOCOL_AUTO)board=BmsProtocols.name(name(device));
         publish(state.withPhase(BmsState.CONNECTING,""));
         try{gatt=device.connectGatt(context,false,callback,BluetoothDevice.TRANSPORT_LE);}
         catch(RuntimeException e){gatt=null;publish(BmsState.of(BmsState.FAILED,error(e)));}
@@ -258,10 +257,6 @@ public final class BmsController {
         @Override public void onServicesDiscovered(BluetoothGatt g,int status){
             worker.post(()->{
                 if(g!=gatt)return;
-                if(board==BmsSettings.PROTOCOL_AUTO){
-                    board=BmsProtocols.services(serviceUuids(g));
-                    if(board==BmsSettings.PROTOCOL_AUTO)board=BmsSettings.PROTOCOL_DL;
-                }
                 protocol=BmsProtocols.create(board);
                 List<BmsProtocol.Endpoint> endpoints=protocol==null?List.of(DlBmsProtocol.ENDPOINT):protocol.endpoints();
                 if(!attach(g,endpoints)){close(protocol==null?"未找到 BMS 服务":"未找到协议特征");return;}
@@ -373,7 +368,7 @@ public final class BmsController {
                 try{name=result.getDevice().getName();}catch(RuntimeException ignored){}
                 if((name==null||name.isEmpty())&&advertised!=null)name=advertised.getDeviceName();
                 String mac=result.getDevice().getAddress();if(mac==null)return;
-                String label=name==null?"":name;boolean matched=BmsProtocols.name(label)!=BmsSettings.PROTOCOL_AUTO;
+                String label=name==null?"":name;boolean matched=BmsProtocols.name(label)!=BmsSettings.PROTOCOL_UNKNOWN;
                 if(!matched&&advertised!=null){
                     SparseArray<byte[]> data=advertised.getManufacturerSpecificData();
                     if(data!=null)for(int i=0;i<data.size();i++)if(DlBmsProtocol.advertisement(data.keyAt(i),data.valueAt(i))){matched=true;break;}

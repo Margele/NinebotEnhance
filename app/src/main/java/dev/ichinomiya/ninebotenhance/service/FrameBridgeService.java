@@ -114,6 +114,16 @@ public final class FrameBridgeService extends Service {
                             android.app.PendingIntent.FLAG_IMMUTABLE | android.app.PendingIntent.FLAG_CANCEL_CURRENT | android.app.PendingIntent.FLAG_ONE_SHOT, pickerOptions.toBundle()));
                     break;
                 }
+                case Protocol.BMS_CONFIG: {
+                    dev.ichinomiya.ninebotenhance.bms.BmsController controller = dev.ichinomiya.ninebotenhance.bms.BmsController.get(FrameBridgeService.this);
+                    if (args.getBoolean("save")) {
+                        dev.ichinomiya.ninebotenhance.core.BmsSettings next = controller.settings();
+                        if (args.containsKey("bms_poll_ms")) next = next.withPollMs(args.getInt("bms_poll_ms"));
+                        if (args.containsKey("bms_prefer")) next = next.withPreferBms(args.getBoolean("bms_prefer"));
+                        if (!next.equals(controller.settings())) controller.save(next);
+                    }
+                    dev.ichinomiya.ninebotenhance.notification.BmsBundle.config(result, controller.settings()); break;
+                }
                 case Protocol.UPDATE_CHECK: result = UpdateChecker.get(FrameBridgeService.this).snapshot(args.getBoolean("refresh")); break;
                 case Protocol.READ:
                     result = sourceStatus(session, projection);

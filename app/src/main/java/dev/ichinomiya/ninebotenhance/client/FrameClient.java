@@ -472,7 +472,7 @@ public final class FrameClient {
                 try {
                     Bundle config = bridge.call(Protocol.SETTINGS, new Bundle());
                     DisplaySettings value = Ipc.settings(config); String selected = config.getString(AppCatalog.SELECTED, "");
-                    cachePrivilege(config);
+                    cachePrivilege(config); applyBmsConfig(config);
                     PictureSource source = savedSource;
                     screenCapture = source.captures(); drawing = source.draws();
                     if (!source.virtual() && activity == null)
@@ -1006,6 +1006,22 @@ public final class FrameClient {
     }
     public PrivilegeMode cachedPrivilege() { return savedPrivilege; }
     public PictureSource cachedSource() { return savedSource; }
+    private volatile Bundle bmsConfig = new Bundle();
+    public Bundle cachedBmsConfig() { return bmsConfig; }
+    /** The module's BMS configuration; its source choice is mirrored into the widget flags so cards, conditions and vehicle reads follow it. */
+    private void applyBmsConfig(Bundle result) {
+        if (result == null || !result.containsKey("bms_prefer")) return;
+        bmsConfig = new Bundle(result);
+        boolean prefer = result.getBoolean("bms_prefer");
+        WidgetSettings current = widgets;
+        if (current.enabled(WidgetSettings.VOLTAGE_FROM_BMS) != prefer || current.enabled(WidgetSettings.POWER_FROM_BMS) != prefer) {
+            saveWidgetSettings(current.with(WidgetSettings.VOLTAGE_FROM_BMS, prefer).with(WidgetSettings.POWER_FROM_BMS, prefer));
+            report("BMS source " + (prefer ? "bms" : "dashboard"));
+        }
+    }
+    public void bmsConfig(Bundle args, Consumer<Bundle> done, Consumer<String> failed) {
+        metadataCall(Protocol.BMS_CONFIG, args, result -> { applyBmsConfig(result); done.accept(result); }, failed);
+    }
     public boolean drawing() { return drawing; }
     public DrawSettings drawSettings() { return drawSettings; }
     public void saveDrawSettings(DrawSettings value) {
@@ -1021,12 +1037,13 @@ public final class FrameClient {
     private dev.ichinomiya.ninebotenhance.notification.DrawPanel.Values drawValues(long now) {
         WidgetSettings w = widgets;
         RideState.Snapshot r = ride.snapshot();
-        float speed = r.speedAt() == 0 || r.speedTenths() < 0 || now - r.speedAt() > w.speedLimitMs() ? Float.NaN : r.speedKmh();
-        float watts = !r.hasPower() || now - r.powerAt() > w.powerLimitMs() ? Float.NaN : r.power();
-        dev.ichinomiya.ninebotenhance.core.BatteryTelemetry.Value v = battery.snapshot().voltage();
-        float volts = v == null || now - v.elapsedTime() > w.voltageLimitMs() ? Float.NaN : v.number();
-        dev.ichinomiya.ninebotenhance.core.TireTelemetry.Snapshot t = tires.snapshot();
         dev.ichinomiya.ninebotenhance.core.BmsState bms = hud.bmsIfFresh(now);
+        boolean boardVoltage = w.enabled(WidgetSettings.VOLTAGE_FROM_BMS) && bms.data().known(), boardPower = w.enabled(WidgetSettings.POWER_FROM_BMS) && bms.data().known();
+        float speed = r.speedAt() == 0 || r.speedTenths() < 0 || now - r.speedAt() > w.speedLimitMs() ? Float.NaN : r.speedKmh();
+        float watts = boardPower ? bms.data().watts() : !r.hasPower() || now - r.powerAt() > w.powerLimitMs() ? Float.NaN : r.power();
+        dev.ichinomiya.ninebotenhance.core.BatteryTelemetry.Value v = battery.snapshot().voltage();
+        float volts = boardVoltage ? bms.data().volts() : v == null || now - v.elapsedTime() > w.voltageLimitMs() ? Float.NaN : v.number();
+        dev.ichinomiya.ninebotenhance.core.TireTelemetry.Snapshot t = tires.snapshot();
         return new dev.ichinomiya.ninebotenhance.notification.DrawPanel.Values(speed, watts, volts, bms.data().known() ? bms.data().soc() : -1,
                 tyre(t.front().pressure(), now, w), tyre(t.rear().pressure(), now, w));
     }
@@ -1108,7 +1125,7 @@ public final class FrameClient {
     public void getSettings(Consumer<Bundle> done, Consumer<String> failed) {
         Bundle args = new Bundle(); args.putBoolean("include_apps", true);
         metadataCall(Protocol.SETTINGS, args, result -> {
-            try { cachePrivilege(result); cacheSettings(Ipc.settings(result), result.getString(AppCatalog.SELECTED, "")); done.accept(result); }
+            try { cachePrivilege(result); applyBmsConfig(result); cacheSettings(Ipc.settings(result), result.getString(AppCatalog.SELECTED, "")); done.accept(result); }
             catch (RuntimeException e) { failed.accept(Ipc.error(e)); }
         }, failed);
     }

@@ -108,7 +108,7 @@ def main():
         assert f"package: name='{PACKAGE}'" in badging and f"versionCode='{code}'" in badging and f"versionName='{name}'" in badging
         assert "application-label:'Ninebot Enhance'" in badging and "launchable-activity: name='"+PACKAGE+".ui.ModuleActivity'" in badging
         manifest=run([tool(bt,'aapt2'),'dump','xmltree',apk,'--file','AndroidManifest.xml'],records)
-        assert len(re.findall(r'^\s*E: activity\s',manifest,re.MULTILINE)) == 7
+        assert len(re.findall(r'^\s*E: activity\s',manifest,re.MULTILINE)) == 8
         assert '.ui.LaunchAppPickerActivity' in manifest and '.ui.TouchSettingsActivity' in manifest
         assert '.ui.NotificationSettingsActivity' in manifest and '.notification.MirrorNotificationListener' in manifest
         assert 'android.permission.BIND_NOTIFICATION_LISTENER_SERVICE' in manifest
@@ -127,7 +127,7 @@ def main():
             assert archive.read('META-INF/xposed/scope.list').split()==[b'cn.ninebot.ninebot',b'com.autonavi.minimap',b'com.tencent.map',b'com.baidu.BaiduMap']
             assert b'staticScope=true' in archive.read('META-INF/xposed/module.prop').splitlines()
             definitions=set().union(*(defined_classes(archive.read(n)) for n in archive.namelist() if re.fullmatch(r'classes\d*\.dex',n)))
-            for required in ['hook/MirrorModule','service/FrameBridgeService','service/RootBridgeProvider','display/RootDisplayMain','privilege/PrivilegeManager','privilege/PrivilegedLauncher','privilege/RootAuthorization','core/AuthorizedShell','core/StartPermission','core/PictureSource','core/DrawSettings','core/DrawLayout','notification/DrawPanel','service/DrawSession','ui/DrawSettingsDialog','platform/Gatt','platform/BlePermissions','core/Streams','core/FramePacer','diagnostics/StreamStats','hook/StatisticsHooks','ui/StatisticsDialog','hook/EncodingHooks','diagnostics/EncodingDiagnostics','diagnostics/EncodingFormat','diagnostics/CaptureConfigReader','diagnostics/WeakIdentityMap','lamp/LampController','ui/LampSettingsActivity','core/TxLampProtocol']:
+            for required in ['hook/MirrorModule','service/FrameBridgeService','service/RootBridgeProvider','display/RootDisplayMain','privilege/PrivilegeManager','privilege/PrivilegedLauncher','privilege/RootAuthorization','core/AuthorizedShell','core/StartPermission','core/PictureSource','core/DrawSettings','core/DrawLayout','notification/DrawPanel','service/DrawSession','ui/DrawSettingsDialog','ui/SetupGuideActivity','ui/PermissionRows','ui/ReadSettingsDialog','platform/Gatt','platform/BlePermissions','core/Streams','core/FramePacer','diagnostics/StreamStats','hook/StatisticsHooks','ui/StatisticsDialog','hook/EncodingHooks','diagnostics/EncodingDiagnostics','diagnostics/EncodingFormat','diagnostics/CaptureConfigReader','diagnostics/WeakIdentityMap','lamp/LampController','ui/LampSettingsActivity','core/TxLampProtocol']:
                 assert 'L'+PACKAGE.replace('.','/')+'/'+required+';' in definitions,required
             for required in ['Lrikka/shizuku/Shizuku;','Lrikka/sui/Sui;','Lrikka/shizuku/ShizukuProvider;']:assert required in definitions
             for required in ['core/CaptureSize','core/ProjectionGrant','service/ProjectionSession','service/ScreenCaptureService','ui/ScreenCaptureConsentActivity','ui/RecordingPanel']:

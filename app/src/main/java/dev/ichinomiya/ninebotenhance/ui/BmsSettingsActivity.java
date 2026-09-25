@@ -19,10 +19,10 @@ import dev.ichinomiya.ninebotenhance.core.LampSettings;
 import java.util.List;
 import java.util.function.Consumer;
 
-/** Module-owned BMS screen: scan for a board, bind it, choose which protocol it speaks and how often it is polled; the link runs in the module process. */
+/** Module-owned BMS screen: scan for a board, bind it and choose which protocol it speaks; the poll interval and the source choice live on the read settings page. */
 public final class BmsSettingsActivity extends Activity {
     private MirrorUi theme;private BmsController bms;
-    private EditText mac;private SeekBar poll;private TextView status,permissionStatus,pollValue;private Button grant,scan,save;
+    private EditText mac;private TextView status,permissionStatus;private Button grant,scan,save;
     private RadioGroup protocols;private Consumer<BmsState> watcher;private boolean saving;
     @Override protected void onCreate(Bundle saved){
         boolean dark=getIntent().getBooleanExtra("dark",true);
@@ -52,14 +52,11 @@ public final class BmsSettingsActivity extends Activity {
         LinearLayout.LayoutParams addressParams=new LinearLayout.LayoutParams(-1,-2);addressParams.topMargin=gap;root.addView(addressRow,addressParams);
         root.addView(caption("协议"));
         protocols=new RadioGroup(this);protocols.setOrientation(RadioGroup.VERTICAL);
-        for(int id=0;id<BmsSettings.PROTOCOL_NAMES.length;id++){
-            RadioButton choice=radio(BmsSettings.PROTOCOL_NAMES[id]);protocols.addView(choice,new RadioGroup.LayoutParams(-1,-2));
-            if(id==current.protocol())choice.setChecked(true);
+        for(int i=0;i<BmsSettings.PROTOCOL_NAMES.length;i++){
+            RadioButton choice=radio(BmsSettings.PROTOCOL_NAMES[i]);protocols.addView(choice,new RadioGroup.LayoutParams(-1,-2));
+            if(BmsSettings.PROTOCOL_DL+i==current.protocol())choice.setChecked(true);
         }
         root.addView(protocols,new LinearLayout.LayoutParams(-1,-2));
-        pollValue=label("",16);
-        int step=BmsSettings.POLL_STEP_MS;
-        poll=slider("轮询间隔",root,pollValue,BmsSettings.MIN_POLL_MS/step,BmsSettings.MAX_POLL_MS/step,current.pollMs()/step,v->(v%2==0?String.valueOf(v/2):v/2+".5")+" 秒");
         status=label("",14);root.addView(status);
         save=button("保存并连接");root.addView(save);save.setOnClickListener(v->commit());
         ScrollView scroll=new ScrollView(this);scroll.addView(root);scroll.setBackgroundColor(theme.surface);
@@ -110,7 +107,9 @@ public final class BmsSettingsActivity extends Activity {
         String address=LampSettings.normalizeMac(mac.getText().toString());
         if(address.isEmpty()){status.setText("蓝牙地址无效");return;}
         mac.setText(address);
-        BmsSettings next=new BmsSettings(address,poll.getProgress()*BmsSettings.POLL_STEP_MS,protocols.getCheckedRadioButtonId()<0?BmsSettings.PROTOCOL_AUTO:protocols.indexOfChild(protocols.findViewById(protocols.getCheckedRadioButtonId())));
+        int checked=protocols.getCheckedRadioButtonId();
+        int protocol=checked<0?BmsSettings.PROTOCOL_DL:BmsSettings.PROTOCOL_DL+protocols.indexOfChild(protocols.findViewById(checked));
+        BmsSettings next=bms.settings().withMac(address).withProtocol(protocol);
         bms.save(next);bms.hold(BmsController.HOLD_SCREEN,BmsController.SCREEN_HOLD_MS);
         saving=true;save.setEnabled(false);status.setText("正在连接");
         status.postDelayed(()->{
@@ -142,19 +141,5 @@ public final class BmsSettingsActivity extends Activity {
         edit.setTextColor(theme.text);edit.setTextSize(18);edit.setBackgroundTintList(null);
         edit.setBackground(theme.background(this,theme.input,12,false));edit.setPadding(pad,pad,pad,pad);
         edit.setMinimumHeight(MirrorUi.dp(this,52));return edit;
-    }
-    private interface Describe{String of(int value);}
-    private SeekBar slider(String name,LinearLayout parent,TextView value,int min,int max,int current,Describe describe){
-        LinearLayout header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);
-        header.addView(caption(name),new LinearLayout.LayoutParams(0,-2,1));header.addView(value);
-        parent.addView(header,new LinearLayout.LayoutParams(-1,-2));
-        SeekBar bar=new SeekBar(this);bar.setMin(min);bar.setMax(max);bar.setProgress(Math.max(min,Math.min(max,current)));
-        value.setText(describe.of(bar.getProgress()));
-        bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
-            @Override public void onProgressChanged(SeekBar b,int progress,boolean user){value.setText(describe.of(progress));}
-            @Override public void onStartTrackingTouch(SeekBar b){}
-            @Override public void onStopTrackingTouch(SeekBar b){}
-        });
-        parent.addView(bar,new LinearLayout.LayoutParams(-1,-2));return bar;
     }
 }

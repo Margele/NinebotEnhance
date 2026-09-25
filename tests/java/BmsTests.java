@@ -114,17 +114,17 @@ final class BmsTests {
         CoreTests.check(yy.accept(badYy,1900)==null&&yy.accept(yyStatus(2000),2000)!=null,"a 彦阳 frame with a wrong CRC is dropped and the stream recovers");
         CoreTests.check(BmsProtocols.name("DL-BMS")==BmsSettings.PROTOCOL_DL&&BmsProtocols.name("ANT@24S") ==BmsSettings.PROTOCOL_ANT
                 &&BmsProtocols.name("JBD-24S")==BmsSettings.PROTOCOL_JBD&&BmsProtocols.name("jk02_32S")==BmsSettings.PROTOCOL_JK
-                &&BmsProtocols.name("HLK-B40")==BmsSettings.PROTOCOL_YY&&BmsProtocols.name("随机设备")==BmsSettings.PROTOCOL_AUTO,
+                &&BmsProtocols.name("HLK-B40")==BmsSettings.PROTOCOL_YY&&BmsProtocols.name("随机设备")==BmsSettings.PROTOCOL_UNKNOWN,
                 "the advertised name picks the protocol");
         CoreTests.check(BmsProtocols.services(List.of("0000ff00-0000-1000-8000-00805f9b34fb"))==BmsSettings.PROTOCOL_JBD
                 &&BmsProtocols.services(List.of("6e400001-b5a3-f393-e0a9-e50e24dcca9e"))==BmsSettings.PROTOCOL_YY
                 &&BmsProtocols.services(List.of("0000ffe0-0000-1000-8000-00805f9b34fb","0000ffe2-0000-1000-8000-00805f9b34fb"))==BmsSettings.PROTOCOL_DL
-                &&BmsProtocols.services(List.of())==BmsSettings.PROTOCOL_AUTO&&BmsProtocols.create(BmsSettings.PROTOCOL_DL)==null,
+                &&BmsProtocols.services(List.of())==BmsSettings.PROTOCOL_UNKNOWN&&BmsProtocols.create(BmsSettings.PROTOCOL_DL)==null,
                 "the exposed services settle the protocol when the name says nothing");
         BmsSettings forced=new BmsSettings("b4:f5:f6:77:77:0b",2750,BmsSettings.PROTOCOL_JK);
-        CoreTests.check(forced.protocol()==BmsSettings.PROTOCOL_JK&&new BmsSettings("b4:f5:f6:77:77:0b",2750,99).protocol()==BmsSettings.PROTOCOL_AUTO
+        CoreTests.check(forced.protocol()==BmsSettings.PROTOCOL_JK&&new BmsSettings("b4:f5:f6:77:77:0b",2750,99).protocol()==BmsSettings.PROTOCOL_DL
                 &&forced.withProtocol(BmsSettings.PROTOCOL_ANT).protocol()==BmsSettings.PROTOCOL_ANT
-                &&BmsSettings.protocolName(BmsSettings.PROTOCOL_YY).equals("彦阳")&&BmsSettings.NONE.protocol()==BmsSettings.PROTOCOL_AUTO,
+                &&BmsSettings.protocolName(BmsSettings.PROTOCOL_YY).equals("彦阳")&&BmsSettings.NONE.protocol()==BmsSettings.PROTOCOL_DL&&!BmsSettings.NONE.preferBms()&&forced.withPreferBms(true).preferBms()&&BmsSettings.protocolName(BmsSettings.PROTOCOL_DL).equals("DL")&&BmsSettings.protocolName(0).equals("DL"),
                 "the chosen protocol is stored, clamped and named");
     }
     /** A 152-byte ANT status answer for a sixteen cell, two sensor pack. */

@@ -16,9 +16,6 @@ public final class WidgetOptionsDialog {
     public record Slider(String label,int min,int max,int value,Describe describe){}
     public interface Apply{WidgetSettings apply(WidgetSettings current,int mask,int[] sliders);}
     private static final Describe SECONDS=v->v+" 秒";
-    /** Read-interval sliders move in half-second steps. */
-    private static final Describe HALF_SECONDS=v->(v%2==0?String.valueOf(v/2):v/2+".5")+" 秒";
-    private static final int STEP=WidgetSettings.READ_STEP_MS,MIN_STEPS=WidgetSettings.MIN_READ_MS/STEP,MAX_STEPS=WidgetSettings.MAX_READ_MS/STEP;
     public static void tyres(Activity activity,FrameClient frames,View reference){
         show(activity,frames,reference,"胎压",
                 List.of(new Option("前胎压力与温度",WidgetSettings.TYRE_FRONT),new Option("后胎压力与温度",WidgetSettings.TYRE_REAR)),
@@ -26,7 +23,7 @@ public final class WidgetOptionsDialog {
     }
     public static void voltage(Activity activity,FrameClient frames,View reference){
         WidgetSettings s=frames.widgetSettings();
-        show(activity,frames,reference,"电压",List.of(new Option("曲线图",WidgetSettings.VOLTAGE_CHART),new Option("BMS 优先",WidgetSettings.VOLTAGE_FROM_BMS)),
+        show(activity,frames,reference,"电压",List.of(new Option("曲线图",WidgetSettings.VOLTAGE_CHART)),
                 List.of(new Slider("曲线时长",WidgetSettings.MIN_CHART_SECONDS,WidgetSettings.MAX_CHART_SECONDS,s.chartSeconds(),SECONDS)),
                 (current,mask,values)->current.withMask(mask).chart(values[0]));
     }
@@ -38,7 +35,7 @@ public final class WidgetOptionsDialog {
     }
     public static void power(Activity activity,FrameClient frames,View reference){
         WidgetSettings s=frames.widgetSettings();
-        show(activity,frames,reference,"功率",List.of(new Option("曲线图",WidgetSettings.POWER_CHART),new Option("BMS 优先",WidgetSettings.POWER_FROM_BMS)),
+        show(activity,frames,reference,"功率",List.of(new Option("曲线图",WidgetSettings.POWER_CHART)),
                 List.of(new Slider("曲线时长",WidgetSettings.MIN_CHART_SECONDS,WidgetSettings.MAX_CHART_SECONDS,s.powerChartSeconds(),SECONDS)),
                 (current,mask,values)->current.withMask(mask).powerChart(values[0]));
     }
@@ -50,15 +47,6 @@ public final class WidgetOptionsDialog {
                         new Slider("速度阈值",WidgetSettings.MIN_HOLD_SPEED,WidgetSettings.MAX_HOLD_SPEED,s.holdSpeedMax(),v->v+" km/h"),
                         new Slider("最短持续",WidgetSettings.MIN_HOLD_SECONDS,WidgetSettings.MAX_HOLD_SECONDS,s.holdSeconds(),SECONDS)),
                 (current,mask,values)->current.withMask(mask).holdRange(values[0],values[1],values[2],values[3]));
-    }
-    public static void reads(Activity activity,FrameClient frames,View reference){
-        WidgetSettings s=frames.widgetSettings();
-        show(activity,frames,reference,"数据读取设置",List.of(),
-                List.of(new Slider("胎压读取间隔",WidgetSettings.MIN_TYRE_SECONDS,WidgetSettings.MAX_TYRE_SECONDS,s.tyreIntervalSeconds(),SECONDS),
-                        new Slider("电压读取间隔",MIN_STEPS,MAX_STEPS,s.voltageIntervalMs()/STEP,HALF_SECONDS),
-                        new Slider("速度读取间隔",MIN_STEPS,MAX_STEPS,s.speedIntervalMs()/STEP,HALF_SECONDS),
-                        new Slider("功率读取间隔",MIN_STEPS,MAX_STEPS,s.powerIntervalMs()/STEP,HALF_SECONDS)),
-                (current,mask,values)->current.withMask(mask).readIntervals(values[0],values[1]*STEP,values[2]*STEP,values[3]*STEP));
     }
     public static void show(Activity activity,FrameClient frames,View reference,String heading,List<Option> options,List<Slider> sliders,Apply apply){
         MirrorUi theme=new MirrorUi(activity,reference);WidgetSettings settings=frames.widgetSettings();

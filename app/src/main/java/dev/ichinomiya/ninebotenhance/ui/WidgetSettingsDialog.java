@@ -13,7 +13,7 @@ import java.util.*;
 /**
  * Display switches per widget. The cards are listed top down like the screen: the left column first, a draggable divider line, then
  * the right column; rows and the divider reorder by dragging their handles. Every widget has a condition button and those with
- * options a settings button. The volume bar, the read intervals and the hill-hold dodge follow below.
+ * options a settings button. The volume bar and the hill-hold dodge follow below; the lamp and BMS pages and the read settings sit on the settings page itself.
  */
 public final class WidgetSettingsDialog {
     public static void show(Activity activity,FrameClient frames,View reference){
@@ -28,9 +28,6 @@ public final class WidgetSettingsDialog {
         for(int flag:topDown)list.addView(flag==WidgetSettings.COLUMN_DIVIDER?divider(activity,theme,list,scroll):row(activity,frames,reference,theme,settings,flag,checks,list,scroll),rowParams(activity));
         content.addView(list);
         content.addView(row(activity,frames,reference,theme,settings,WidgetSettings.VOLUME,checks,null,null),rowParams(activity));
-        Button reads=new Button(activity);reads.setText("数据读取设置");theme.button(reads,null);reads.setTextSize(14);
-        reads.setOnClickListener(v->WidgetOptionsDialog.reads(activity,frames,reference));
-        LinearLayout.LayoutParams readParams=new LinearLayout.LayoutParams(-1,-2);readParams.topMargin=MirrorUi.dp(activity,8);readParams.bottomMargin=MirrorUi.dp(activity,8);content.addView(reads,readParams);
         LinearLayout hold=(LinearLayout)row(activity,frames,reference,theme,settings,WidgetSettings.HILL_HOLD_DODGE,checks,null,null);
         if(!frames.hillHoldSupported())for(int i=0;i<hold.getChildCount();i++)hold.getChildAt(i).setEnabled(false);
         content.addView(hold,rowParams(activity));
@@ -91,8 +88,6 @@ public final class WidgetSettingsDialog {
             default->null;
         };
         if(open!=null)row.addView(small(activity,theme,"设置",v->open.run()),smallParams(activity));
-        if(flag==WidgetSettings.LAMP)row.addView(small(activity,theme,"管理",v->frames.lampSettings(activity,theme.dark)),smallParams(activity));
-        if(flag==WidgetSettings.BMS)row.addView(small(activity,theme,"管理",v->frames.bmsSettings(activity,theme.dark)),smallParams(activity));
         return row;
     }
     private static Button small(Activity activity,MirrorUi theme,String text,View.OnClickListener click){
