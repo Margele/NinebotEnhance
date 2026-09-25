@@ -1,5 +1,7 @@
 package dev.ichinomiya.ninebotenhance.privilege;
 
+import dev.ichinomiya.ninebotenhance.core.PictureSource;
+
 import android.content.*;
 import android.content.pm.PackageManager;
 import android.os.*;
@@ -68,33 +70,61 @@ public final class PrivilegeManager {
         result.putBoolean("privilege_can_request", supported && !allowed && !blocked && !permissionPending.get());
         result.putString("privilege_status", detail);
         RootAuthorization.status(result);
-        PrivilegeMode selected = PrivilegeMode.parse(result.getString("privilege_mode"));
-        StartPermission.Backend choice = StartPermission.select(selected, allowed, result.getBoolean("root_ready"));
+        PrivilegeMode selected = mode(context); PictureSource source = source(context);
+        result.putString(PictureSource.KEY, source.name());
+        StartPermission.Backend choice = StartPermission.select(source, selected, allowed, result.getBoolean("root_ready"));
         result.putBoolean("start_allowed", choice != StartPermission.Backend.NONE);
-        result.putBoolean("start_pending", StartPermission.needsRootCheck(selected, allowed, result.getBoolean("root_ready")) && result.getBoolean("root_pending"));
+        result.putBoolean("start_pending", StartPermission.needsRootCheck(source, selected, allowed, result.getBoolean("root_ready")) && result.getBoolean("root_pending"));
         result.putString("start_backend", choice.name());
-        result.putString("start_permission_message", selected == PrivilegeMode.NONE
-                ? "开始投屏时通过系统窗口选择单个应用或整个屏幕。"
+        result.putString("start_permission_message", !source.virtual()
+                ? (source.captures() ? "开始投屏时通过系统窗口选择单个应用或整个屏幕。" : "绘制模式不需要授权。")
                 : selected == PrivilegeMode.SHIZUKU
                 ? "Shizuku / Sui 尚未连接或授权，请先到设置 → 授权方式申请权限。"
-                : selected == PrivilegeMode.ROOT ? "Root 权限检查未通过，请到设置 → 授权方式检查权限。\n" + result.getString("root_status")
-                : "当前没有可用授权，请先到设置 → 授权方式授权 Shizuku / Sui，或申请 / 验证 Root 权限。");
+                : "Root 权限检查未通过，请到设置 → 授权方式检查权限。\n" + result.getString("root_status"));
         return result;
     }
     public static void prepareStart(Context context) {
         Bundle current = status(context);
-        if (StartPermission.needsRootCheck(mode(context), current.getBoolean("privilege_granted"), current.getBoolean("root_ready")))
+        if (StartPermission.needsRootCheck(source(context), mode(context), current.getBoolean("privilege_granted"), current.getBoolean("root_ready")))
             RootAuthorization.check(context);
     }
     private static String blockedMessage() {
         return "已拒绝且不再询问，请在 " + (Sui.isSui() ? "Sui 管理界面" : "Shizuku 的应用管理") + "中为 Ninebot Enhance 开启权限。";
     }
+    /** The saved backend. The old automatic mode becomes Shizuku when it is granted right now and Root otherwise; the old recording mode becomes Root. */
     public static PrivilegeMode mode(Context context) {
-        try { return PrivilegeMode.parse(context.getSharedPreferences("privilege", 0).getString("mode", "AUTO")); }
-        catch (IllegalArgumentException e) { return PrivilegeMode.AUTO; }
+        SharedPreferences p = context.getSharedPreferences("privilege", 0);
+        String saved = p.getString("mode", null);
+        if (saved == null) return PrivilegeMode.ROOT;
+        try { return PrivilegeMode.parse(saved); }
+        catch (IllegalArgumentException e) {
+            PrivilegeMode migrated = "AUTO".equals(saved) && shizukuGranted() ? PrivilegeMode.SHIZUKU : PrivilegeMode.ROOT;
+            p.edit().putString("mode", migrated.name()).apply(); Diagnostics.add("PRIVILEGE mode " + saved + " migrated to " + migrated);
+            return migrated;
+        }
     }
-    public static void save(Context context, String mode) {
-        context.getSharedPreferences("privilege", 0).edit().putString("mode", PrivilegeMode.parse(mode).name()).apply();
+    private static boolean shizukuGranted() {
+        try { return Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED; } catch (RuntimeException e) { return false; }
+    }
+    /** The saved picture source. A build that stored only the privilege mode maps it; a fresh install and a phone below Android 14 start with the capture. */
+    public static PictureSource source(Context context) {
+        SharedPreferences p = context.getSharedPreferences("privilege", 0);
+        PictureSource saved = PictureSource.read(p.getString("source", null), null);
+        if (saved != null) return saved.allowed(Build.VERSION.SDK_INT) ? saved : PictureSource.CAST;
+        PictureSource migrated = PictureSource.migrate(p.getString("mode", null), Build.VERSION.SDK_INT);
+        p.edit().putString("source", migrated.name()).apply(); Diagnostics.add("PRIVILEGE picture source set to " + migrated);
+        return migrated;
+    }
+    /** Either value may be null to keep the saved one; the virtual display is refused on a phone that cannot run it. */
+    public static void save(Context context, String source, String mode) {
+        SharedPreferences.Editor editor = context.getSharedPreferences("privilege", 0).edit();
+        if (source != null) {
+            PictureSource chosen = PictureSource.parse(source);
+            if (!chosen.allowed(Build.VERSION.SDK_INT)) throw new IllegalArgumentException("虚拟显示器仅限 Android 14+ 可用");
+            editor.putString("source", chosen.name());
+        }
+        if (mode != null) editor.putString("mode", PrivilegeMode.parse(mode).name());
+        editor.apply();
     }
     /** The daemon keeps uid 0 instead of dropping to shell: for ROMs that deny shell INJECT_EVENTS. Only Root and root-run Shizuku / Sui can honour it. */
     public static boolean keepRoot(Context context) { return context.getSharedPreferences("privilege", 0).getBoolean("keep_root", false); }
@@ -139,7 +169,7 @@ public final class PrivilegeManager {
             IBinder service = connected.get(15, TimeUnit.SECONDS);
             Bundle request = new Bundle(); request.putString("secret", secret); request.putBinder("owner", owner); request.putBoolean("keep_root", keepRoot(context));
             Bundle response = call(service, PrivilegedLauncher.START, request);
-            ParcelFileDescriptor output = response.getParcelable("output", ParcelFileDescriptor.class);
+            ParcelFileDescriptor output = Ipc.parcelable(response, "output", ParcelFileDescriptor.class);
             if (output == null) throw new IOException("授权服务没有返回输出通道");
             return new UserProcess(service, output, args, connection);
         } catch (Exception e) { cancelled.set(true); cleanup(args, connection); throw e; }

@@ -117,10 +117,10 @@ public final class RootDisplayMain {
                 } catch (Exception e) { exit(); return; }
             }
         }, "Mirror-OwnerWatchdog").start();
-        settings = Ipc.settings(config); surface = config.getParcelable("surface", Surface.class);
+        settings = Ipc.settings(config); surface = Ipc.parcelable(config, "surface", Surface.class);
         renderDpi = config.getInt("render_dpi", 0); captureWidth = config.getInt(Protocol.CAPTURE_WIDTH, 0); captureHeight = config.getInt(Protocol.CAPTURE_HEIGHT, 0);
         scaledRender = false;
-        selectedApp = config.getParcelable(AppCatalog.SELECTED, ComponentName.class);
+        selectedApp = Ipc.parcelable(config, AppCatalog.SELECTED, ComponentName.class);
         if (selectedApp == null) throw new IllegalArgumentException("缺少已选择的启动应用，请回设置选择");
         if (surface == null || !surface.isValid()) throw new IllegalStateException("接收 Surface 已关闭");
         Constructor<DisplayManager> constructor = DisplayManager.class.getDeclaredConstructor(Context.class); constructor.setAccessible(true);
@@ -267,7 +267,7 @@ public final class RootDisplayMain {
                         sendInput(new KeyEvent(time, time, KeyEvent.ACTION_DOWN, key, 0));
                         sendInput(new KeyEvent(time, time, KeyEvent.ACTION_UP, key, 0)); break;
                     case Protocol.ROOT_INPUT:
-                        MotionEvent event = args.getParcelable("event", MotionEvent.class);
+                        MotionEvent event = Ipc.parcelable(args, "event", MotionEvent.class);
                         if (event == null) throw new IllegalArgumentException("缺少触控事件");
                         try { if (event.getPointerCount() > 10) throw new IllegalArgumentException("触点过多");
                             sendTouch(event); }

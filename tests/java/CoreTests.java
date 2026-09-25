@@ -153,11 +153,12 @@ public final class CoreTests {
         componentContractTests();
         canvasLayoutTests();
         check(!PrivilegeMode.ROOT.useShizuku(true), "explicit Root keeps its chosen backend");
-        check(PrivilegeMode.AUTO.useShizuku(true) && !PrivilegeMode.AUTO.useShizuku(false), "automatic backend prefers authorized Shizuku only");
         check(PrivilegeMode.SHIZUKU.useShizuku(true), "explicit authorized Shizuku selected");
         boolean unavailable=false;try{PrivilegeMode.SHIZUKU.useShizuku(false);}catch(IllegalStateException e){unavailable=true;}
         check(unavailable,"explicit Shizuku never silently falls back to su");
         rejects(()->PrivilegeMode.parse("COMMAND"),"unknown privilege mode rejected");
+        rejects(()->PrivilegeMode.parse("AUTO"),"the automatic backend is gone");
+        drawTests();
         byte[] rtp={(byte)0x80,(byte)0xe0,0,1,0,0,0,100,0,0,0,1,42};
         ByteBuffer packet=ByteBuffer.wrap(rtp);RtpPacket parsed=RtpPacket.parse(packet);
         check(parsed!=null&&parsed.marker&&parsed.bytes==13&&parsed.frameKey.equals("1:100"),"RTP marker, length and frame timestamp parsed");
@@ -499,6 +500,21 @@ public final class CoreTests {
         TireTelemetryTests.run();
         BatteryTelemetryTests.run();
         System.out.println("PASS: " + assertions + " assertions (RGBA/canvas, projection consent/size, input/rotation, lease/stop cancellation, settings, hook scope, ownership, service reconnection, statistics, app recovery and music)");
+    }
+    /** The drawn picture source: its settings clamp and keep at least one field, and its geometry stays inside the free area. */
+    private static void drawTests() {
+        DrawSettings d = new DrawSettings(83, DrawSettings.NONE, DrawSettings.NONE, DrawSettings.NONE);
+        check(d.maxSpeed() == 80 && d.first() == DrawSettings.VOLTAGE && d.shown().length == 1, "the gauge scale snaps to 10 km/h and an empty picture falls back to the voltage");
+        check(new DrawSettings(5, 9, -1, DrawSettings.POWER).maxSpeed() == DrawSettings.MIN_MAX_SPEED && new DrawSettings(999, 1, 2, 3).maxSpeed() == DrawSettings.MAX_MAX_SPEED, "the scale stays between 30 and 200");
+        DrawSettings three = new DrawSettings(120, DrawSettings.SPEED, DrawSettings.TYRES, DrawSettings.BMS_SOC);
+        check(Arrays.equals(three.shown(), new int[]{DrawSettings.SPEED, DrawSettings.TYRES, DrawSettings.BMS_SOC}) && three.uses(DrawSettings.TYRES) && !three.uses(DrawSettings.VOLTAGE), "up to three fields keep their order");
+        check(new DrawSettings(80, DrawSettings.NONE, DrawSettings.POWER, DrawSettings.NONE).shown().length == 1 && DrawSettings.DEFAULT.label().equals("表程 80 km/h，电压，功率"), "empty slots drop out of the shown list");
+        check(DrawSettings.read((k, f) -> k.equals("draw_max_speed") ? 100 : f).maxSpeed() == 100 && DrawSettings.read((k, f) -> f).equals(DrawSettings.DEFAULT), "settings read from preferences with defaults");
+        DrawLayout l = DrawLayout.of(848, 480, 0, 0, 2);
+        check(l.centerY() - l.radius() >= 0 && l.centerY() + l.radius() <= l.fieldTop() + l.radius() * 0.3f && l.fieldTop() < 480 && l.fieldWidth() == 424 && l.fieldCenter(1) == 636, "the gauge sits in the upper part and the fields split the strip");
+        DrawLayout seven = DrawLayout.of(1024, 600, 48, 56, 0);
+        check(seven.top() == 48 && seven.bottom() == 544 && seven.centerY() - seven.radius() >= 48 && seven.centerY() + seven.radius() <= 544, "the dashboard's own rows stay free of the gauge");
+        check(DrawLayout.sweepFor(40, 80) == 135 && DrawLayout.sweepFor(200, 80) == 270 && DrawLayout.sweepFor(Float.NaN, 80) == 0 && DrawLayout.sweepFor(10, 0) == 0, "the arc fills in proportion and clamps");
     }
     private static void themeTests() {
         check(ThemeMode.dark(true, null, 0xff989da8), "night mode is not overridden by secondary grey text");

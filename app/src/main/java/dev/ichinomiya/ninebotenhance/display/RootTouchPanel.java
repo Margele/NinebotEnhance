@@ -1,5 +1,7 @@
 package dev.ichinomiya.ninebotenhance.display;
 
+import dev.ichinomiya.ninebotenhance.core.Streams;
+
 import android.os.SystemClock;
 import android.system.ErrnoException;
 import android.system.Os;
@@ -79,7 +81,7 @@ final class RootTouchPanel {
     private static String listing() throws Exception {
         Process process = new ProcessBuilder("/system/bin/getevent", "-pi").redirectErrorStream(true).start();
         try (InputStream input = process.getInputStream()) {
-            byte[] data = input.readAllBytes();
+            byte[] data = Streams.readAll(input, 4 * 1024 * 1024);
             if (!process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("getevent did not finish");
             return new String(data, StandardCharsets.UTF_8);
         } finally { process.destroy(); }

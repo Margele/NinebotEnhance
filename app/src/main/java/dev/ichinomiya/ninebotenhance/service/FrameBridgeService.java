@@ -1,8 +1,9 @@
 package dev.ichinomiya.ninebotenhance.service;
 
+import dev.ichinomiya.ninebotenhance.core.PictureSource;
+
 import dev.ichinomiya.ninebotenhance.core.CallerPolicy;
 import dev.ichinomiya.ninebotenhance.core.CaptureSize;
-import dev.ichinomiya.ninebotenhance.core.PrivilegeMode;
 import dev.ichinomiya.ninebotenhance.diagnostics.Diagnostics;
 import dev.ichinomiya.ninebotenhance.diagnostics.LogDigest;
 import dev.ichinomiya.ninebotenhance.ipc.Ipc;
@@ -20,7 +21,18 @@ import dev.ichinomiya.ninebotenhance.privilege.RootAuthorization;
 
 /** Only metadata and Binder/Surface handles cross IPC. No compressed image payloads. */
 public final class FrameBridgeService extends Service {
-    private volatile boolean projectionSource;
+    /** Which session answers status reads: the one the last BEGIN started. */
+    private volatile PictureSource activeSource = PictureSource.VIRTUAL;
+    private Bundle sourceStatus(RootSession session, ProjectionSession projection) {
+        switch (activeSource) {
+            case CAST: return projection.status();
+            case DRAW: return DrawSession.get(this).status();
+            default: return session.status();
+        }
+    }
+    private boolean anyActive(RootSession session, ProjectionSession projection) {
+        return session.status().getBoolean("active") || projection.active() || DrawSession.get(this).active();
+    }
     private final Binder binder = new Binder() {
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
             if (code == INTERFACE_TRANSACTION) { reply.writeString(Protocol.DESCRIPTOR); return true; }
@@ -45,23 +57,22 @@ public final class FrameBridgeService extends Service {
                             code == Protocol.LOG_EXPORT_BEGIN ? session.previousExit() : ""); break;
                 case Protocol.PRIVILEGE:
                     if (args.getBoolean("save")) synchronized (session) {
-                        if (projection.active()) throw new IllegalStateException("请先结束投屏再修改授权方式");
-                        session.savePrivilege(args.getString("privilege_mode"));
+                        if (anyActive(session, projection)) throw new IllegalStateException("请先结束投屏再修改授权方式");
+                        session.savePrivilege(args.getString(PictureSource.KEY), args.getString("privilege_mode"));
                         if (args.containsKey("keep_root") && args.getBoolean("keep_root") != PrivilegeManager.keepRoot(FrameBridgeService.this)) {
-                            if (session.status().getBoolean("active")) throw new IllegalStateException("请先结束投屏再修改授权方式");
                             // The retained Root shell carries the other identity: drop it so the next check reconnects with the chosen one.
                             PrivilegeManager.saveKeepRoot(FrameBridgeService.this, args.getBoolean("keep_root")); RootAuthorization.close();
                         }
                     }
                     if (args.getBoolean("request_permission")) PrivilegeManager.requestPermission();
                     if (args.getBoolean("request_root")) {
-                        if (session.status().getBoolean("active") || projection.active()) throw new IllegalStateException("请先结束投屏再申请 Root 权限");
+                        if (anyActive(session, projection)) throw new IllegalStateException("请先结束投屏再申请 Root 权限");
                         RootAuthorization.request(FrameBridgeService.this);
                     }
-                    if (args.getBoolean("prepare_start") && !session.status().getBoolean("active") && !projection.active())
+                    if (args.getBoolean("prepare_start") && !anyActive(session, projection))
                         PrivilegeManager.prepareStart(FrameBridgeService.this);
                     result = PrivilegeManager.status(FrameBridgeService.this);
-                    result.putBoolean("active", session.status().getBoolean("active") || projection.active()); break;
+                    result.putBoolean("active", anyActive(session, projection)); break;
                 case Protocol.NOTIFICATION_SETTINGS:
                     android.app.ActivityOptions options = android.app.ActivityOptions.makeBasic();
                     if (Build.VERSION.SDK_INT >= 35) options.setPendingIntentCreatorBackgroundActivityStartMode(android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
@@ -98,47 +109,52 @@ public final class FrameBridgeService extends Service {
                     if (Build.VERSION.SDK_INT >= 35) pickerOptions.setPendingIntentCreatorBackgroundActivityStartMode(android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
                     Intent pickerIntent = new Intent(FrameBridgeService.this, dev.ichinomiya.ninebotenhance.ui.LaunchAppPickerActivity.class)
                             .putExtra("dark", args.getBoolean("dark", true)).putExtra(AppCatalog.SELECTED, args.getString(AppCatalog.SELECTED, ""))
-                            .putExtra(dev.ichinomiya.ninebotenhance.ui.LaunchAppPickerActivity.RESULT, args.getParcelable(dev.ichinomiya.ninebotenhance.ui.LaunchAppPickerActivity.RESULT, ResultReceiver.class));
+                            .putExtra(dev.ichinomiya.ninebotenhance.ui.LaunchAppPickerActivity.RESULT, Ipc.parcelable(args, dev.ichinomiya.ninebotenhance.ui.LaunchAppPickerActivity.RESULT, ResultReceiver.class));
                     result.putParcelable("picker_intent", android.app.PendingIntent.getActivity(FrameBridgeService.this, 802, pickerIntent,
                             android.app.PendingIntent.FLAG_IMMUTABLE | android.app.PendingIntent.FLAG_CANCEL_CURRENT | android.app.PendingIntent.FLAG_ONE_SHOT, pickerOptions.toBundle()));
                     break;
                 }
                 case Protocol.UPDATE_CHECK: result = UpdateChecker.get(FrameBridgeService.this).snapshot(args.getBoolean("refresh")); break;
                 case Protocol.READ:
-                    result = projectionSource ? projection.status() : session.status();
+                    result = sourceStatus(session, projection);
                     // The poll carries whether a Ninebot screen is visible; the lamp and BMS links follow it (see NotificationHub.hostVisible).
                     dev.ichinomiya.ninebotenhance.notification.NotificationHub.hostVisible(FrameBridgeService.this, args.getBoolean("foreground"));
                     break;
                 case Protocol.HUD_SNAPSHOT:
-                    result = projectionSource ? projection.status() : session.status();
+                    result = sourceStatus(session, projection);
                     if (result.getBoolean("active") && args.getString(Protocol.REQUEST, "").equals(result.getString(Protocol.REQUEST)))
                         result.putBundle("hud", dev.ichinomiya.ninebotenhance.notification.NotificationHub.get(FrameBridgeService.this)
                                 .snapshot(args.getLong("hud_cursor", -1), args.getString("hud_epoch", ""),args.getLong("music_art_revision",-1)));
                     break;
                 case Protocol.BEGIN:
                     synchronized (session) {
-                        Surface surface = args.getParcelable("surface", Surface.class);
-                        boolean recording = PrivilegeManager.mode(FrameBridgeService.this) == PrivilegeMode.NONE;
-                        if (projection.active() || session.status().getBoolean("active") || recording != args.getBoolean(Protocol.SCREEN_CAPTURE)
-                                || recording && args.getBoolean("local")) {
-                            if (surface != null) surface.release(); throw new IllegalStateException("会话或授权方式已变化，请结束后重新开始投屏");
+                        Surface surface = Ipc.parcelable(args, "surface", Surface.class);
+                        PictureSource source = PrivilegeManager.source(FrameBridgeService.this);
+                        DrawSession drawing = DrawSession.get(FrameBridgeService.this);
+                        if (anyActive(session, projection) || !source.name().equals(args.getString(PictureSource.KEY, ""))
+                                || !source.virtual() && args.getBoolean("local")) {
+                            if (surface != null) surface.release(); throw new IllegalStateException("会话或画面提供方式已变化，请结束后重新开始投屏");
                         }
-                        if (recording) {
+                        if (source.draws()) {
+                            if (surface != null) surface.release();
+                            drawing.begin(args.getString(Protocol.REQUEST), args.getBinder("owner"));
+                            activeSource = PictureSource.DRAW; result = drawing.status();
+                        } else if (source.captures()) {
                             CaptureSize size;
                             try { size = new CaptureSize(args.getInt(Protocol.CAPTURE_WIDTH), args.getInt(Protocol.CAPTURE_HEIGHT)); }
                             catch (RuntimeException e) { if (surface != null) surface.release(); throw e; }
                             android.app.PendingIntent consent = projection.begin(args.getString(Protocol.REQUEST), surface, args.getBinder("owner"), uid, size);
-                            projectionSource = true; result = projection.status(); result.putParcelable(Protocol.CAPTURE_CONSENT, consent);
+                            activeSource = PictureSource.CAST; result = projection.status(); result.putParcelable(Protocol.CAPTURE_CONSENT, consent);
                         } else {
                             session.setRenderPlan(args.getInt(Protocol.CAPTURE_WIDTH, 0), args.getInt(Protocol.CAPTURE_HEIGHT, 0), args.getInt("render_dpi", 0));
                             session.begin(args.getString(Protocol.REQUEST), surface, args.getBinder("owner"), uid, Ipc.settings(args), args.getString(AppCatalog.SELECTED));
-                            projectionSource = false; result = session.status();
+                            activeSource = PictureSource.VIRTUAL; result = session.status();
                         }
                     }
                     result.putBundle("hud", dev.ichinomiya.ninebotenhance.notification.NotificationHub.get(FrameBridgeService.this).snapshot(-1, ""));
                     break;
                 case Protocol.PROJECTION_SURFACE:
-                    Surface updated = args.getParcelable("surface", Surface.class);
+                    Surface updated = Ipc.parcelable(args, "surface", Surface.class);
                     CaptureSize size;
                     try { size = new CaptureSize(args.getInt(Protocol.CAPTURE_WIDTH), args.getInt(Protocol.CAPTURE_HEIGHT)); }
                     catch (RuntimeException e) { if (updated != null) updated.release(); throw e; }
@@ -146,15 +162,16 @@ public final class FrameBridgeService extends Service {
                     catch (Exception e) { throw new IllegalStateException("录屏尺寸更新失败：" + Ipc.error(e)); }
                     break;
                 case Protocol.STOP_DIRECT:
-                    session.stop(args.getString(Protocol.REQUEST), "九号结束投屏"); projection.stop(args.getString(Protocol.REQUEST), "九号结束投屏"); break;
+                    session.stop(args.getString(Protocol.REQUEST), "九号结束投屏"); projection.stop(args.getString(Protocol.REQUEST), "九号结束投屏");
+                    DrawSession.get(FrameBridgeService.this).stop(args.getString(Protocol.REQUEST), "九号结束投屏"); break;
                 case Protocol.SETTINGS:
                     if (args.getBoolean("save")) synchronized (session) {
-                        if (projection.active()) throw new IllegalStateException("请先结束投屏再修改设置");
-                        if (PrivilegeManager.mode(FrameBridgeService.this).usesVirtualDisplay())
+                        if (projection.active() || DrawSession.get(FrameBridgeService.this).active()) throw new IllegalStateException("请先结束投屏再修改设置");
+                        if (PrivilegeManager.source(FrameBridgeService.this).virtual())
                             session.saveSettings(Ipc.settings(args), args.getString(AppCatalog.SELECTED));
                     }
                     result = session.settingsBundle();
-                    if (args.getBoolean("include_apps") && PrivilegeManager.mode(FrameBridgeService.this).usesVirtualDisplay())
+                    if (args.getBoolean("include_apps") && PrivilegeManager.source(FrameBridgeService.this).virtual())
                         result.putParcelableArrayList(AppCatalog.APPS, AppCatalog.choices(getPackageManager()));
                     break;
                 case Protocol.REPORT: Diagnostics.add(args.getString("message", "")); break;
@@ -185,7 +202,7 @@ public final class FrameBridgeService extends Service {
                     session.requireController(args.getString(Protocol.REQUEST), uid);
                     session.keyboard(args.getString(Protocol.REQUEST), code, args); break;
                 case Protocol.UI_INPUT:
-                    MotionEvent event = args.getParcelable("event", MotionEvent.class);
+                    MotionEvent event = Ipc.parcelable(args, "event", MotionEvent.class);
                     if (event == null) throw new IllegalArgumentException("缺少触控事件");
                     try {
                         session.requireController(args.getString(Protocol.REQUEST), uid);
@@ -198,7 +215,7 @@ public final class FrameBridgeService extends Service {
             finally {
                 // Bundle serialization duplicates the descriptor; close the service's copy even if the reply fails.
                 if (code == Protocol.LOG_EXPORT_BEGIN) {
-                    ParcelFileDescriptor fd = result.getParcelable("log_fd", ParcelFileDescriptor.class);
+                    ParcelFileDescriptor fd = Ipc.parcelable(result, "log_fd", ParcelFileDescriptor.class);
                     if (fd != null) try { fd.close(); } catch (java.io.IOException ignored) {}
                 }
             }

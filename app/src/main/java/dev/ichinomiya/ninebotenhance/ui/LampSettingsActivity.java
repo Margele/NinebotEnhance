@@ -1,5 +1,7 @@
 package dev.ichinomiya.ninebotenhance.ui;
 
+import dev.ichinomiya.ninebotenhance.platform.BlePermissions;
+
 import android.Manifest;
 import android.app.*;
 import android.content.pm.PackageManager;
@@ -44,7 +46,7 @@ public final class LampSettingsActivity extends Activity {
         root.addView(label("大灯控制",22));
         permissionStatus=label("",14);root.addView(permissionStatus);
         grant=button("授予蓝牙权限");root.addView(grant);
-        grant.setOnClickListener(v->requestPermissions(new String[]{Manifest.permission.BLUETOOTH_CONNECT,Manifest.permission.BLUETOOTH_SCAN},7));
+        grant.setOnClickListener(v->requestPermissions(BlePermissions.request(),7));
         LinearLayout addressRow=new LinearLayout(this);addressRow.setGravity(Gravity.BOTTOM);
         LinearLayout addressColumn=new LinearLayout(this);addressColumn.setOrientation(LinearLayout.VERTICAL);
         addressColumn.addView(caption("蓝牙地址"));
@@ -108,8 +110,8 @@ public final class LampSettingsActivity extends Activity {
         super.onRequestPermissionsResult(code,permissions,results);refreshPermission();lamp.hold(LampController.HOLD_SCREEN,LampController.SCREEN_HOLD_MS);
     }
     private void refreshPermission(){
-        boolean connect=checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)==PackageManager.PERMISSION_GRANTED;
-        boolean scanning=checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN)==PackageManager.PERMISSION_GRANTED;
+        boolean connect=BlePermissions.connectGranted(this);
+        boolean scanning=BlePermissions.scanGranted(this);
         permissionStatus.setText(connect&&scanning?"蓝牙权限已授予":"蓝牙权限未授予");
         grant.setVisibility(connect&&scanning?View.GONE:View.VISIBLE);
         scan.setEnabled(scanning);

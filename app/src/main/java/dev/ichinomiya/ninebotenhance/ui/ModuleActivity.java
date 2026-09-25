@@ -1,5 +1,9 @@
 package dev.ichinomiya.ninebotenhance.ui;
 
+import dev.ichinomiya.ninebotenhance.core.PictureSource;
+
+import dev.ichinomiya.ninebotenhance.platform.BlePermissions;
+
 import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
@@ -79,17 +83,17 @@ public final class ModuleActivity extends Activity {
         boolean notifications = new NotificationPreferences(this).granted();
         row("通知使用权", notifications ? "已授权" : "未授权", notifications ? State.OK : State.MISSING,
                 "读取手机通知，在仪表上显示通知卡片和音乐控件", notifications ? null : () -> AutostartPages.openNotificationAccess(this));
-        boolean bluetooth = granted(Manifest.permission.BLUETOOTH_CONNECT) && granted(Manifest.permission.BLUETOOTH_SCAN);
+        boolean bluetooth = BlePermissions.granted(this);
         row("附近的设备", bluetooth ? "已授权" : "未授权", bluetooth ? State.OK : State.MISSING,
                 "模块自己连接大灯控制器和 BMS 保护板，不用于车辆", bluetooth ? null
-                : () -> requestPermissions(new String[]{Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN}, REQUEST_BLUETOOTH));
+                : () -> requestPermissions(BlePermissions.request(), REQUEST_BLUETOOTH));
         boolean phone = granted(Manifest.permission.READ_PHONE_STATE);
         row("电话状态", phone ? "已授权" : "未授权", phone ? State.OK : State.MISSING,
                 "手机状态卡片的信号格数和网络制式", phone ? null : () -> requestPermissions(new String[]{Manifest.permission.READ_PHONE_STATE}, REQUEST_PHONE));
         privilegeRow();
         row("自启动", "需手动确认", State.NEUTRAL, "九号进程要能拉起模块服务，HyperOS / ColorOS 等系统需允许自启动", () -> AutostartPages.open(this, null));
         touchRow();
-        row("屏幕录制", "每次投屏时授权", State.NEUTRAL, "授权方式为「无」时用系统录屏采集画面", null);
+        row("屏幕录制", "每次投屏时授权", State.NEUTRAL, "画面提供方式为「投屏」时用系统录屏采集画面", null);
         row("网络", "安装时授予", State.NEUTRAL, "向 GitHub 检查新版本，判断手机在 Wi-Fi 还是流量", null);
         row("查看全部应用", "安装时授予", State.NEUTRAL, "列出可投屏的应用和通知白名单", null);
         row("前台服务", "安装时授予", State.NEUTRAL, "系统录屏期间保持采集服务", null);
@@ -105,18 +109,18 @@ public final class ModuleActivity extends Activity {
     }
     private void privilegeRow() {
         PrivilegeMode mode = PrivilegeManager.mode(this);
-        if (mode == PrivilegeMode.NONE) { row("Root / Shizuku", "授权方式为「无」，不需要", State.NEUTRAL, "启动辅助进程建虚拟屏、注入触摸；「无」时改用系统录屏", null); return; }
+        PictureSource source = PrivilegeManager.source(this);
+        if (!source.virtual()) { row("Root / Shizuku", "画面提供方式为「" + source.label() + "」，不需要", State.NEUTRAL, "启动辅助进程建虚拟屏、注入触摸；投屏和绘制不需要", null); return; }
         Bundle status = PrivilegeManager.status(this);
         boolean shizuku = status.getBoolean("privilege_granted"), root = status.getBoolean("root_ready"), pending = status.getBoolean("root_pending") || status.getBoolean("privilege_pending");
         String text = shizuku ? (status.getString("privilege_status", "").startsWith("Sui") ? "Sui 已授权" : "Shizuku 已授权") : root ? "Root 可用" : pending ? "检查中" : "未授权";
         row("Root / Shizuku", text, shizuku || root ? State.OK : pending ? State.NEUTRAL : State.MISSING,
-                "启动辅助进程建虚拟屏、注入触摸；「无」时改用系统录屏", shizuku || root ? null : () -> requestPrivilege(mode, status));
+                "启动辅助进程建虚拟屏、注入触摸；投屏和绘制不需要", shizuku || root ? null : () -> requestPrivilege(mode, status));
         if (pending) main.postDelayed(this::refresh, 1500);
     }
     private void requestPrivilege(PrivilegeMode mode, Bundle status) {
-        boolean shizukuRunning = status.getBoolean("privilege_running");
         try {
-            if (mode == PrivilegeMode.SHIZUKU || mode == PrivilegeMode.AUTO && shizukuRunning) PrivilegeManager.requestPermission();
+            if (mode == PrivilegeMode.SHIZUKU) PrivilegeManager.requestPermission();
             else RootAuthorization.request(this);
         } catch (RuntimeException e) { Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show(); }
         main.postDelayed(this::refresh, 1500);

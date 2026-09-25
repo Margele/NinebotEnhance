@@ -1,5 +1,11 @@
 package dev.ichinomiya.ninebotenhance.client;
 
+import dev.ichinomiya.ninebotenhance.core.HudPalette;
+
+import dev.ichinomiya.ninebotenhance.core.DrawSettings;
+
+import dev.ichinomiya.ninebotenhance.core.PictureSource;
+
 import dev.ichinomiya.ninebotenhance.core.AppRecoveryState;
 import dev.ichinomiya.ninebotenhance.core.DirectSession;
 import dev.ichinomiya.ninebotenhance.core.DisplaySettings;
@@ -105,8 +111,12 @@ public final class FrameClient {
     private volatile String moduleDigest = "尚未取得模块进程日志", brokerIdentity = "尚未取得模块进程标识";
     private volatile DisplaySettings savedSettings = DisplaySettings.defaults();
     private volatile String savedApp = "";
-    private volatile PrivilegeMode savedPrivilege = PrivilegeMode.AUTO;
-    private volatile boolean screenCapture;
+    private volatile PrivilegeMode savedPrivilege = PrivilegeMode.ROOT;
+    private volatile PictureSource savedSource = PictureSource.CAST;
+    /** The running session's source: the capture is passed through, the drawn picture is painted here, the virtual display gets the cards. */
+    private volatile boolean screenCapture, drawing;
+    private volatile DrawSettings drawSettings = DrawSettings.DEFAULT;
+    private final dev.ichinomiya.ninebotenhance.notification.DrawPanel drawPanel = new dev.ichinomiya.ninebotenhance.notification.DrawPanel();
     private volatile int appRecovery;
     private volatile String appRecoveryDetail = "";
     private long lastDiagnostics;
@@ -240,7 +250,8 @@ public final class FrameClient {
                 SharedPreferences p = context.getSharedPreferences("dev.ichinomiya.ninebotenhance.cached_display", Context.MODE_PRIVATE);
                 savedSettings = DisplaySettings.read(p::getInt);
                 savedApp = p.getString(AppCatalog.SELECTED, "");
-                savedPrivilege = PrivilegeMode.parse(p.getString("privilege_mode", "AUTO"));
+                savedPrivilege = PrivilegeMode.read(p.getString("privilege_mode", null), PrivilegeMode.ROOT);
+                savedSource = PictureSource.read(p.getString(PictureSource.KEY, null), PictureSource.CAST);
             } catch (RuntimeException e) { report("SETTINGS cache " + Ipc.error(e)); }
             // Developer options live for one run of the host: the version taps, calibration, register probe and navigation test
             // all start hidden and off, whatever an earlier run left behind.
@@ -250,6 +261,7 @@ public final class FrameClient {
                 widgets=WidgetSettings.migrate(saved.getInt("version",1),saved.getInt("mask",WidgetSettings.ALL),saved.getInt("tyre_interval",WidgetSettings.DEFAULT_TYRE_SECONDS),saved.getInt("voltage_interval_ms",saved.getInt("voltage_interval",1)*1000),saved.getInt("music_hide",WidgetSettings.DEFAULT_MUSIC_HIDE_SECONDS),saved.getInt("chart_seconds",WidgetSettings.DEFAULT_CHART_SECONDS),saved.getInt("hold_power",WidgetSettings.DEFAULT_HOLD_POWER),saved.getInt("hold_speed",WidgetSettings.DEFAULT_HOLD_SPEED),saved.getInt("speed_interval_ms",saved.getInt("speed_interval",1)*1000),saved.getInt("power_interval_ms",saved.getInt("power_interval",1)*1000),saved.getInt("hold_power_max",WidgetSettings.DEFAULT_HOLD_POWER_MAX),saved.getInt("hold_seconds",WidgetSettings.DEFAULT_HOLD_SECONDS),saved.getInt("speed_chart_seconds",WidgetSettings.DEFAULT_CHART_SECONDS),saved.getInt("power_chart_seconds",WidgetSettings.DEFAULT_CHART_SECONDS),WidgetSettings.parseOrder(saved.getString("widget_order","")),loadConditions(saved));
                 widgets=widgets.with(WidgetSettings.REGISTER_PROBE,false);
                 hud.setWidgets(widgets);
+                drawSettings=DrawSettings.read(saved::getInt);
                 encoderOverride=new EncoderOverride(saved.getInt("encoder_bitrate_kbps",0),saved.getInt("encoder_fps",0),saved.getBoolean("preview_stats",false),saved.getInt("encoder_frame_width",0),saved.getInt("encoder_frame_height",0));
                 hiddenFeatures=new HiddenFeatures(saved.getBoolean("unhide_throttle",false),saved.getBoolean("unhide_hardkey",false),saved.getBoolean("unhide_cruise",false));
                 naviTest=false;
@@ -460,11 +472,12 @@ public final class FrameClient {
                 try {
                     Bundle config = bridge.call(Protocol.SETTINGS, new Bundle());
                     DisplaySettings value = Ipc.settings(config); String selected = config.getString(AppCatalog.SELECTED, "");
-                    savedPrivilege = PrivilegeMode.parse(config.getString("privilege_mode", "AUTO"));
-                    screenCapture = !savedPrivilege.usesVirtualDisplay();
-                    if (screenCapture && activity == null)
-                        throw new IllegalArgumentException("录屏模式只用于车辆投屏");
-                    if (!screenCapture && selected.isEmpty()) throw new IllegalArgumentException("请先在设置中选择启动应用并保存");
+                    cachePrivilege(config);
+                    PictureSource source = savedSource;
+                    screenCapture = source.captures(); drawing = source.draws();
+                    if (!source.virtual() && activity == null)
+                        throw new IllegalArgumentException("投屏和绘制只用于车辆投屏");
+                    if (source.virtual() && selected.isEmpty()) throw new IllegalArgumentException("请先在设置中选择启动应用并保存");
                     if (completed.get() || !request.equals(ownerRequest)) return;
                     loadDashboardLayout(battery.selectedKey());
                     settings = value.withFrame(frameWidth(), frameHeight()); cacheSettings(value, selected); closeFrames();
@@ -482,15 +495,19 @@ public final class FrameClient {
                         CaptureSize capture = CaptureSize.fit(bounds.width(), bounds.height()); width = capture.width(); height = capture.height();
                         state = "正在准备系统录屏授权";
                     }
-                    reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3);
-                    packed = ByteBuffer.allocateDirect((screenCapture ? width * height : settings.width * settings.height) * 4);
-                    ImageReader current = reader; current.setOnImageAvailableListener(source -> scheduleImage(request, source), worker);
-                    Surface surface = current.getSurface();
-                    try { surface.setFrameRate(FramePacer.TARGET_FPS, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT); }
-                    catch (RuntimeException e) { report("RGBA surface frame-rate hint unavailable " + Ipc.error(e)); }
-                    report("RGBA pacing targetFps=" + FramePacer.TARGET_FPS + " intervalMs=" + FramePacer.INTERVAL_MS + " policy=defer-latest");
+                    Surface surface = null;
+                    if (!drawing) {
+                        reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3);
+                        packed = ByteBuffer.allocateDirect((screenCapture ? width * height : settings.width * settings.height) * 4);
+                        ImageReader current = reader; current.setOnImageAvailableListener(image -> scheduleImage(request, image), worker);
+                        surface = current.getSurface();
+                        try { surface.setFrameRate(FramePacer.TARGET_FPS, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT); }
+                        catch (RuntimeException e) { report("RGBA surface frame-rate hint unavailable " + Ipc.error(e)); }
+                        report("RGBA pacing targetFps=" + FramePacer.TARGET_FPS + " intervalMs=" + FramePacer.INTERVAL_MS + " policy=defer-latest");
+                    } else { state = "正在启动绘制"; report("DRAW frame " + settings.width + "x" + settings.height + " " + drawSettings.label()); }
                     if (completed.get() || !request.equals(ownerRequest)) { closeFrames(); return; }
-                    Bundle args = Ipc.request(request); Ipc.settings(args, settings); args.putParcelable("surface", surface); args.putBinder("owner", owner);
+                    Bundle args = Ipc.request(request); Ipc.settings(args, settings); if (surface != null) args.putParcelable("surface", surface); args.putBinder("owner", owner);
+                    args.putString(PictureSource.KEY, source.name());
                     args.putString(AppCatalog.SELECTED, selected);
                     args.putBoolean(Protocol.SCREEN_CAPTURE, screenCapture);
                     args.putInt(Protocol.CAPTURE_WIDTH, width); args.putInt(Protocol.CAPTURE_HEIGHT, height);
@@ -499,17 +516,14 @@ public final class FrameClient {
                     if (completed.get() || !request.equals(ownerRequest)) { stopDirect(request); return; }
                     beginAccepted = request; acceptStatus(request, status);
                     hud.accept(request, status.getBundle("hud"), SystemClock.elapsedRealtime());
-                    PendingIntent consent = status.getParcelable(Protocol.CAPTURE_CONSENT, PendingIntent.class);
+                    PendingIntent consent = Ipc.parcelable(status, Protocol.CAPTURE_CONSENT, PendingIntent.class);
                     main.post(() -> {
                         if (!completed.compareAndSet(false, true) || !request.equals(ownerRequest)) return;
                         try {
                             if (screenCapture) {
                                 if (consent == null || activity == null || activity.isFinishing() || activity.isDestroyed())
                                     throw new IllegalStateException("录屏授权入口已失效，请重新开始投屏");
-                                ActivityOptions options = ActivityOptions.makeBasic()
-                                        .setPendingIntentBackgroundActivityStartMode(Build.VERSION.SDK_INT >= 36
-                                                ? ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE : ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
-                                activity.startIntentSenderForResult(consent.getIntentSender(), -1, null, 0, 0, 0, options.toBundle());
+                                activity.startIntentSenderForResult(consent.getIntentSender(), -1, null, 0, 0, 0, Ipc.launchOptions());
                             }
                             done.accept(null);
                         } catch (Exception e) { stopDirect(request); done.accept(Ipc.error(e)); }
@@ -572,13 +586,23 @@ public final class FrameClient {
     public void drawInline(String request, Canvas canvas, int width, int height, boolean rotated) {
         canvas.drawColor(Color.BLACK);
         // Published frames are never mutated/recycled; the UI must not wait for encoder scaling under frameLock.
+        if (request.equals(ownerRequest) && drawing && ready() && !debugMode.enabled() && width >= 1 && height >= 1) {
+            int save = canvas.save();
+            if (rotated) { canvas.translate(width, 0); canvas.rotate(90); int swap = width; width = height; height = swap; }
+            float[] r = Geometry.fit(settings.width, settings.height, width, height);
+            canvas.translate(r[0], r[1]); float scale = (r[2] - r[0]) / settings.width; canvas.scale(scale, scale);
+            drawPanel.draw(canvas, settings.width, settings.height, HudPalette.of(dashboardDark), settings.background(dashboardDark), drawSettings, drawValues(SystemClock.elapsedRealtime()));
+            canvas.restoreToCount(save);
+            if (encoderOverride.previewStats()) drawStatistics(canvas, r[0], r[1]);
+            return;
+        }
         Bitmap snapshot = request.equals(ownerRequest) && ready() ? (debugMode.enabled() ? calibration : latest) : null;
         if (snapshot == null || width < 1 || height < 1) return;
         int save = canvas.save();
         if (rotated) { canvas.translate(width, 0); canvas.rotate(90); int swap = width; width = height; height = swap; }
         float[] r = Geometry.fit(snapshot.getWidth(), snapshot.getHeight(), width, height);
         canvas.drawBitmap(snapshot, null, new RectF(r[0], r[1], r[2], r[3]), paint);
-        if (!debugMode.enabled()) {
+        if (!debugMode.enabled() && savedSource.virtual()) {
             int overlaySave = canvas.save(); canvas.translate(r[0], r[1]);
             hud.draw(canvas, Math.round(r[2]-r[0]), Math.round(r[3]-r[1]), SystemClock.elapsedRealtime());
             drawTouchMarks(canvas, Math.round(r[2]-r[0]), SystemClock.elapsedRealtime());
@@ -586,8 +610,8 @@ public final class FrameClient {
             // Without a cast the preview shows, on top of everything, what the vehicle dashboard itself paints over the frame.
             if (!casting && !dev.ichinomiya.ninebotenhance.core.SidebarLayout.halfScreen(Math.round(r[2]-r[0]), Math.round(r[3]-r[1]))) dev.ichinomiya.ninebotenhance.notification.DashboardOcclusion.draw(canvas, Math.round(r[2]-r[0]), Math.round(r[3]-r[1]), hud.hillHold(SystemClock.elapsedRealtime()), hud.occlusions());
             canvas.restoreToCount(overlaySave);
-            if (encoderOverride.previewStats()) drawStatistics(canvas, r[0], r[1]);
         }
+        if (!debugMode.enabled() && encoderOverride.previewStats()) drawStatistics(canvas, r[0], r[1]);
         canvas.restoreToCount(save);
         // A phone repaint is not an encoder capture: do not advance replacement counters.
     }
@@ -605,7 +629,7 @@ public final class FrameClient {
     }
     public void back(String request) { control(request, Protocol.UI_BACK, null); }
     public boolean screenCapture() { return screenCapture; }
-    public Bundle hudTouch(String request,float x,float y){return readyFor(request)&&!debugMode.enabled()?hud.touch(x,y,settings.width,settings.height,SystemClock.elapsedRealtime()):null;}
+    public Bundle hudTouch(String request,float x,float y){return readyFor(request)&&!debugMode.enabled()&&savedSource.virtual()?hud.touch(x,y,settings.width,settings.height,SystemClock.elapsedRealtime()):null;}
     public int appRecoveryFor(String request) {
         return !debugMode.enabled() && captureActiveFor(request) && displayReady ? appRecovery : AppRecoveryState.HIDDEN;
     }
@@ -633,7 +657,7 @@ public final class FrameClient {
         control(request, code, event, new Bundle());
     }
     private void control(String request, int code, MotionEvent event, Bundle payload) {
-        if (screenCapture || !request.equals(ownerRequest) || (event != null && event.getActionMasked() == MotionEvent.ACTION_MOVE && pendingInput.get() >= 3)) {
+        if (!savedSource.virtual() || !request.equals(ownerRequest) || (event != null && event.getActionMasked() == MotionEvent.ACTION_MOVE && pendingInput.get() >= 3)) {
             if (event != null) event.recycle(); return;
         }
         pendingInput.incrementAndGet();
@@ -732,7 +756,9 @@ public final class FrameClient {
                 hud.acceptProbe(current.enabled(WidgetSettings.REGISTER_PROBE) ? probe.snapshot(probeSelection, probeRawModules) : null);
                 hud.acceptRide(ride.snapshot());
                 // Local simulation reads too when the vehicle happens to be connected, so reads can be checked without casting.
-                if ((current.readsTyres() || current.readsVoltage() || current.readsSpeed() || current.readsPower() || current.enabled(WidgetSettings.REGISTER_PROBE))) vehiclePulse.accept(battery.selectedKey(), current);
+                // The drawn picture reads what its gauge and fields show; the passed-through capture reads nothing.
+                WidgetSettings reads = drawing ? drawReads(current) : current;
+                if (!screenCapture && (reads.readsTyres() || reads.readsVoltage() || reads.readsSpeed() || reads.readsPower() || reads.enabled(WidgetSettings.REGISTER_PROBE))) vehiclePulse.accept(battery.selectedKey(), reads);
                 else vehicleStop.run();
                 if (casting) themeSender.accept(battery.selectedKey(), dashboardDark);
                 if (casting && naviTest) naviTestPulse.accept(battery.selectedKey());
@@ -814,7 +840,7 @@ public final class FrameClient {
     public boolean readyFor(String request) { synchronized (frameLock) { return request.equals(ownerRequest) && ready(); } }
     public boolean captureActiveFor(String request) { return request.equals(ownerRequest) && active && SystemClock.elapsedRealtime() - lastPoll < 4000; }
     public boolean failedFor(String request) { return request.equals(ownerRequest) && !active && lastPoll != 0; }
-    private boolean ready() { return active && displayReady && (debugMode.enabled() || latest != null) && SystemClock.elapsedRealtime() - lastPoll < 4000; }
+    private boolean ready() { return active && displayReady && (debugMode.enabled() || latest != null || drawing) && SystemClock.elapsedRealtime() - lastPoll < 4000; }
     public void stopDirect(String request) {
         synchronized (observationLock) {
             if (request != null && request.equals(observedRequest)) {
@@ -843,12 +869,17 @@ public final class FrameClient {
         synchronized (frameLock) {
             if (!casting || !ready() || width < 1 || height < 1 || (long)width * height > 4096L * 2160) return false;
             boolean debug = debugMode.enabled();
-            Bitmap picture = debug ? calibrationFrame() : latest;
-            float[] r = debug ? new float[]{0, 0, width, height} : Geometry.fit(picture.getWidth(), picture.getHeight(), width, height);
             int saved = canvas.save();
             try { canvas.clipRect(0, 0, width, height); canvas.drawColor(Color.BLACK);
-                canvas.drawBitmap(picture, null, new RectF(r[0], r[1], r[2], r[3]), paint);
-                if(!debug){int overlaySave=canvas.save();canvas.translate(r[0],r[1]);hud.draw(canvas,Math.round(r[2]-r[0]),Math.round(r[3]-r[1]),SystemClock.elapsedRealtime());drawTouchMarks(canvas,Math.round(r[2]-r[0]),SystemClock.elapsedRealtime());drawCalibrationTarget(canvas,Math.round(r[2]-r[0]),Math.round(r[3]-r[1]));canvas.restoreToCount(overlaySave);}
+                if (drawing && !debug) {
+                    drawPanel.draw(canvas, width, height, HudPalette.of(dashboardDark), settings.background(dashboardDark), drawSettings, drawValues(SystemClock.elapsedRealtime()));
+                } else {
+                    Bitmap picture = debug ? calibrationFrame() : latest;
+                    float[] r = debug ? new float[]{0, 0, width, height} : Geometry.fit(picture.getWidth(), picture.getHeight(), width, height);
+                    canvas.drawBitmap(picture, null, new RectF(r[0], r[1], r[2], r[3]), paint);
+                    // Cards, touch marks and the calibration target belong to the virtual display; the capture is passed through as it is.
+                    if(!debug&&savedSource.virtual()){int overlaySave=canvas.save();canvas.translate(r[0],r[1]);hud.draw(canvas,Math.round(r[2]-r[0]),Math.round(r[3]-r[1]),SystemClock.elapsedRealtime());drawTouchMarks(canvas,Math.round(r[2]-r[0]),SystemClock.elapsedRealtime());drawCalibrationTarget(canvas,Math.round(r[2]-r[0]),Math.round(r[3]-r[1]));canvas.restoreToCount(overlaySave);}
+                }
             } finally { canvas.restoreToCount(saved); }
             replacements++; if (streamStats != null) streamStats.replaced(); return true;
         }
@@ -870,18 +901,19 @@ public final class FrameClient {
         }
     }
     public DisplaySettings cachedSettings() { return savedSettings; }
-    private FrameStamp stamp() { return new FrameStamp(pictureRevision, debugMode.enabled() ? 0 : hud.revision(SystemClock.elapsedRealtime())); }
+    private FrameStamp stamp() {
+        long now = SystemClock.elapsedRealtime();
+        return new FrameStamp(pictureRevision, debugMode.enabled() ? 0 : drawing ? dev.ichinomiya.ninebotenhance.notification.DrawPanel.stamp(drawSettings, drawValues(now), dashboardDark) : hud.revision(now));
+    }
     /** Opens the module's own lamp screen; its Bluetooth permissions belong to the module, not to Ninebot. */
     public void lampSettings(Activity activity, boolean dark) {
         Bundle args = new Bundle(); args.putBoolean("dark", dark);
         metadataCall(Protocol.LAMP_SETTINGS, args, result -> {
             if (activity.isFinishing() || activity.isDestroyed()) return;
             try {
-                PendingIntent intent = result.getParcelable("lamp_intent", PendingIntent.class);
+                PendingIntent intent = Ipc.parcelable(result, "lamp_intent", PendingIntent.class);
                 if (intent == null) throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
-                ActivityOptions options = ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(Build.VERSION.SDK_INT >= 36
-                        ? ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE : ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
-                activity.startIntentSenderForResult(intent.getIntentSender(), -1, null, 0, 0, 0, options.toBundle());
+                activity.startIntentSenderForResult(intent.getIntentSender(), -1, null, 0, 0, 0, Ipc.launchOptions());
             } catch (Exception e) { android.widget.Toast.makeText(activity, "无法打开大灯控制：" + Ipc.error(e), 1).show(); }
         }, error -> { if (!activity.isDestroyed()) android.widget.Toast.makeText(activity, error, 1).show(); });
     }
@@ -891,11 +923,9 @@ public final class FrameClient {
         metadataCall(Protocol.BMS_SETTINGS,args,result->{
             if(activity.isFinishing()||activity.isDestroyed())return;
             try{
-                PendingIntent intent=result.getParcelable("bms_intent",PendingIntent.class);
+                PendingIntent intent=Ipc.parcelable(result, "bms_intent", PendingIntent.class);
                 if(intent==null)throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
-                ActivityOptions options=ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(Build.VERSION.SDK_INT>=36
-                        ?ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE:ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
-                activity.startIntentSenderForResult(intent.getIntentSender(),-1,null,0,0,0,options.toBundle());
+                activity.startIntentSenderForResult(intent.getIntentSender(),-1,null,0,0,0,Ipc.launchOptions());
             }catch(Exception e){android.widget.Toast.makeText(activity,"无法打开 BMS 管理："+Ipc.error(e),1).show();}
         },error->{if(!activity.isDestroyed())android.widget.Toast.makeText(activity,error,1).show();});
     }
@@ -905,11 +935,9 @@ public final class FrameClient {
         metadataCall(Protocol.TOUCH_SETTINGS,args,result->{
             if(activity.isFinishing()||activity.isDestroyed())return;
             try{
-                PendingIntent intent=result.getParcelable("touch_intent",PendingIntent.class);
+                PendingIntent intent=Ipc.parcelable(result, "touch_intent", PendingIntent.class);
                 if(intent==null)throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
-                ActivityOptions options=ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(Build.VERSION.SDK_INT>=36
-                        ?ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE:ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
-                activity.startIntentSenderForResult(intent.getIntentSender(),-1,null,0,0,0,options.toBundle());
+                activity.startIntentSenderForResult(intent.getIntentSender(),-1,null,0,0,0,Ipc.launchOptions());
             }catch(Exception e){android.widget.Toast.makeText(activity,"无法打开触摸屏管理："+Ipc.error(e),1).show();}
         },error->{if(!activity.isDestroyed())android.widget.Toast.makeText(activity,error,1).show();});
     }
@@ -918,11 +946,9 @@ public final class FrameClient {
         metadataCall(Protocol.NOTIFICATION_SETTINGS, args, result -> {
             if (activity.isFinishing() || activity.isDestroyed()) return;
             try {
-                PendingIntent intent = result.getParcelable("settings_intent", PendingIntent.class);
+                PendingIntent intent = Ipc.parcelable(result, "settings_intent", PendingIntent.class);
                 if (intent == null) throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
-                ActivityOptions options = ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(Build.VERSION.SDK_INT >= 36
-                        ? ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE : ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
-                activity.startIntentSenderForResult(intent.getIntentSender(), -1, null, 0, 0, 0, options.toBundle());
+                activity.startIntentSenderForResult(intent.getIntentSender(), -1, null, 0, 0, 0, Ipc.launchOptions());
             } catch (Exception e) { android.widget.Toast.makeText(activity, "无法打开通知设置：" + Ipc.error(e), 1).show(); }
         }, error -> { if (!activity.isDestroyed()) android.widget.Toast.makeText(activity, error, 1).show(); });
     }
@@ -938,11 +964,9 @@ public final class FrameClient {
         metadataCall(Protocol.LAUNCH_APP_PICKER, args, result -> {
             if (activity.isFinishing() || activity.isDestroyed()) return;
             try {
-                PendingIntent intent = result.getParcelable("picker_intent", PendingIntent.class);
+                PendingIntent intent = Ipc.parcelable(result, "picker_intent", PendingIntent.class);
                 if (intent == null) throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
-                ActivityOptions options = ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(Build.VERSION.SDK_INT >= 36
-                        ? ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE : ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
-                activity.startIntentSenderForResult(intent.getIntentSender(), -1, null, 0, 0, 0, options.toBundle());
+                activity.startIntentSenderForResult(intent.getIntentSender(), -1, null, 0, 0, 0, Ipc.launchOptions());
             } catch (Exception e) { android.widget.Toast.makeText(activity, "无法打开应用列表：" + Ipc.error(e), 1).show(); }
         }, error -> { if (!activity.isDestroyed()) android.widget.Toast.makeText(activity, error, 1).show(); });
     }
@@ -981,6 +1005,40 @@ public final class FrameClient {
         return calibration;
     }
     public PrivilegeMode cachedPrivilege() { return savedPrivilege; }
+    public PictureSource cachedSource() { return savedSource; }
+    public boolean drawing() { return drawing; }
+    public DrawSettings drawSettings() { return drawSettings; }
+    public void saveDrawSettings(DrawSettings value) {
+        drawSettings = value;
+        try {
+            if (context != null) context.getSharedPreferences(Protocol.MODULE + ".widgets", Context.MODE_PRIVATE).edit().putInt("draw_max_speed", value.maxSpeed())
+                    .putInt("draw_field_1", value.first()).putInt("draw_field_2", value.second()).putInt("draw_field_3", value.third()).apply();
+        } catch (RuntimeException e) { report("DRAW settings save " + Ipc.error(e)); }
+        report("DRAW settings " + value.label());
+        View preview = inlinePreview.get(); if (preview != null) preview.postInvalidateOnAnimation();
+    }
+    /** What the drawn picture shows right now: the same telemetry the cards read, with the cards' freshness limits. */
+    private dev.ichinomiya.ninebotenhance.notification.DrawPanel.Values drawValues(long now) {
+        WidgetSettings w = widgets;
+        RideState.Snapshot r = ride.snapshot();
+        float speed = r.speedAt() == 0 || r.speedTenths() < 0 || now - r.speedAt() > w.speedLimitMs() ? Float.NaN : r.speedKmh();
+        float watts = !r.hasPower() || now - r.powerAt() > w.powerLimitMs() ? Float.NaN : r.power();
+        dev.ichinomiya.ninebotenhance.core.BatteryTelemetry.Value v = battery.snapshot().voltage();
+        float volts = v == null || now - v.elapsedTime() > w.voltageLimitMs() ? Float.NaN : v.number();
+        dev.ichinomiya.ninebotenhance.core.TireTelemetry.Snapshot t = tires.snapshot();
+        dev.ichinomiya.ninebotenhance.core.BmsState bms = hud.bmsIfFresh(now);
+        return new dev.ichinomiya.ninebotenhance.notification.DrawPanel.Values(speed, watts, volts, bms.data().known() ? bms.data().soc() : -1,
+                tyre(t.front().pressure(), now, w), tyre(t.rear().pressure(), now, w));
+    }
+    private static float tyre(dev.ichinomiya.ninebotenhance.core.TireTelemetry.Value value, long now, WidgetSettings w) {
+        return value == null || now - value.elapsedTime() > w.tyreLimitMs() ? Float.NaN : value.number();
+    }
+    /** The vehicle reads the drawn picture needs: the gauge's speed always, the rest as its fields ask. */
+    private WidgetSettings drawReads(WidgetSettings current) {
+        return current.with(WidgetSettings.SPEED, true).with(WidgetSettings.POWER, drawSettings.uses(DrawSettings.POWER))
+                .with(WidgetSettings.VOLTAGE, drawSettings.uses(DrawSettings.VOLTAGE))
+                .with(WidgetSettings.TYRES | WidgetSettings.TYRE_FRONT | WidgetSettings.TYRE_REAR, drawSettings.uses(DrawSettings.TYRES));
+    }
     public String cachedApp() { return savedApp == null ? "" : savedApp; }
     public boolean serviceBindRefused() { return bridge.bindRefused(); }
     /** Keep-DPI: the size and density the display was created at for this session; null when no scaling is needed. */
@@ -1055,9 +1113,10 @@ public final class FrameClient {
         }, failed);
     }
     private void cachePrivilege(Bundle result) {
-        savedPrivilege = PrivilegeMode.parse(result.getString("privilege_mode", "AUTO"));
+        savedPrivilege = PrivilegeMode.read(result.getString("privilege_mode"), PrivilegeMode.ROOT);
+        savedSource = PictureSource.read(result.getString(PictureSource.KEY), savedSource);
         if (context != null) context.getSharedPreferences("dev.ichinomiya.ninebotenhance.cached_display", Context.MODE_PRIVATE)
-                .edit().putString("privilege_mode", savedPrivilege.name()).apply();
+                .edit().putString("privilege_mode", savedPrivilege.name()).putString(PictureSource.KEY, savedSource.name()).apply();
     }
     public void privilege(Bundle args, Consumer<Bundle> done, Consumer<String> failed) {
         metadataCall(Protocol.PRIVILEGE, args, result -> {

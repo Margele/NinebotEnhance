@@ -1,5 +1,7 @@
 package dev.ichinomiya.ninebotenhance.service;
 
+import dev.ichinomiya.ninebotenhance.ipc.Ipc;
+
 import android.app.PendingIntent;
 import android.content.*;
 import android.hardware.usb.UsbDevice;
@@ -47,7 +49,7 @@ public final class TouchPanelUsb {
         Context app = context.getApplicationContext();
         BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override public void onReceive(Context c, Intent intent) {
-                UsbDevice answered = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice.class);
+                UsbDevice answered = Ipc.parcelableExtra(intent, UsbManager.EXTRA_DEVICE, UsbDevice.class);
                 boolean granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false);
                 synchronized (TouchPanelUsb.class) {
                     if (pending != this) return;

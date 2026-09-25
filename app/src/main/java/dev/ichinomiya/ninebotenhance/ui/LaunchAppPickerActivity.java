@@ -1,5 +1,7 @@
 package dev.ichinomiya.ninebotenhance.ui;
 
+import dev.ichinomiya.ninebotenhance.ipc.Ipc;
+
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ComponentName;
@@ -36,7 +38,7 @@ public final class LaunchAppPickerActivity extends Activity {
         boolean dark = getIntent().getBooleanExtra("dark", true);
         setTheme(dark ? android.R.style.Theme_Material_NoActionBar : android.R.style.Theme_Material_Light_NoActionBar);
         super.onCreate(saved); theme = new MirrorUi(dark);
-        receiver = getIntent().getParcelableExtra(RESULT, ResultReceiver.class);
+        receiver = Ipc.parcelableExtra(getIntent(), RESULT, ResultReceiver.class);
         selected = getIntent().getStringExtra(AppCatalog.SELECTED);
         ComponentName selectedComponent = selected == null ? null : ComponentName.unflattenFromString(selected);
         selectedPackage = selectedComponent == null ? "" : selectedComponent.getPackageName();

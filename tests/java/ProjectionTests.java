@@ -7,14 +7,23 @@ import java.util.*;
 final class ProjectionTests {
     private static void check(boolean value, String message) { CoreTests.check(value, message); }
     static void run() throws Exception {
-        for (boolean root : new boolean[]{false, true}) for (boolean shizuku : new boolean[]{false, true}) {
-            check(StartPermission.select(PrivilegeMode.NONE, shizuku, root) == StartPermission.Backend.MEDIA_PROJECTION,
+        for (boolean root : new boolean[]{false, true}) for (boolean shizuku : new boolean[]{false, true}) for (PrivilegeMode mode : PrivilegeMode.values()) {
+            check(StartPermission.select(PictureSource.CAST, mode, shizuku, root) == StartPermission.Backend.MEDIA_PROJECTION,
                     "recording selects system consent regardless of privileged backends");
-            check(!StartPermission.needsRootCheck(PrivilegeMode.NONE, shizuku, root), "recording preflight never invokes su");
+            check(StartPermission.select(PictureSource.DRAW, mode, shizuku, root) == StartPermission.Backend.DRAW, "drawing needs no backend at all");
+            check(!StartPermission.needsRootCheck(PictureSource.CAST, mode, shizuku, root) && !StartPermission.needsRootCheck(PictureSource.DRAW, mode, shizuku, root),
+                    "recording and drawing preflights never invoke su");
         }
-        check(!PrivilegeMode.parse("NONE").usesVirtualDisplay() && !PrivilegeMode.NONE.useShizuku(true), "recording mode hides virtual display settings and never uses Shizuku");
-        check(PrivilegeMode.AUTO.usesVirtualDisplay() && PrivilegeMode.ROOT.usesVirtualDisplay() && PrivilegeMode.SHIZUKU.usesVirtualDisplay(),
-                "privileged modes retain independent app and display settings");
+        check(!PictureSource.CAST.virtual() && !PictureSource.DRAW.virtual() && PictureSource.VIRTUAL.virtual() && PictureSource.DRAW.draws() && PictureSource.CAST.captures(),
+                "only the virtual display keeps the app and display settings");
+        check(PictureSource.VIRTUAL.allowed(34) && !PictureSource.VIRTUAL.allowed(33) && PictureSource.CAST.allowed(30) && PictureSource.DRAW.allowed(30),
+                "the virtual display is limited to Android 14, the other sources are not");
+        check(PictureSource.migrate("NONE", 34) == PictureSource.CAST && PictureSource.migrate("AUTO", 34) == PictureSource.VIRTUAL
+                && PictureSource.migrate("ROOT", 33) == PictureSource.CAST && PictureSource.migrate(null, 34) == PictureSource.CAST,
+                "old privilege modes map to a picture source the phone can run");
+        check(PictureSource.read("DRAW", PictureSource.CAST) == PictureSource.DRAW && PictureSource.read("x", PictureSource.CAST) == PictureSource.CAST
+                && PictureSource.read(null, PictureSource.VIRTUAL) == PictureSource.VIRTUAL, "saved sources read with a fallback");
+        CoreTests.rejects(() -> PictureSource.parse("AUTO"), "there is no automatic picture source");
         ProjectionGrant gate = new ProjectionGrant();
         check(!gate.consume() && !gate.ready() && !gate.open(true), "no consent means no token consumption, ready state or invented recreation");
         check(gate.open(false) && !gate.open(false), "one initial system picker per session");

@@ -1,5 +1,7 @@
 package dev.ichinomiya.ninebotenhance.platform;
 
+import dev.ichinomiya.ninebotenhance.core.Streams;
+
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.zip.*;
@@ -14,7 +16,7 @@ public final class ModuleResources {
         try (ZipFile file = new ZipFile(source)) {
             ZipEntry entry = file.getEntry(resource);
             if (entry == null || entry.getSize() < 0 || entry.getSize() > 128 * 1024) throw new IOException("安装包中缺少有效的许可证文件");
-            try (InputStream input = file.getInputStream(entry)) { return new String(input.readAllBytes(), StandardCharsets.UTF_8); }
+            try (InputStream input = file.getInputStream(entry)) { return new String(Streams.readAll(input, 256 * 1024), StandardCharsets.UTF_8); }
         }
     }
     private ModuleResources() {}

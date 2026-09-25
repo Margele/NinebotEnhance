@@ -38,7 +38,7 @@ public final class ScreenCaptureService extends Service {
         // A delayed or duplicated service start must never stop a later active recording.
         if (request != null) return START_NOT_STICKY;
         String token = intent.getStringExtra("consent_token");
-        Intent consent = intent.getParcelableExtra("capture_data", Intent.class);
+        Intent consent = Ipc.parcelableExtra(intent, "capture_data", Intent.class);
         if (intent.getIntExtra("result_code", 0) != Activity.RESULT_OK || consent == null) { stopSelfResult(startId); return START_NOT_STICKY; }
         ProjectionSession.Boot boot = session.consumeGrant(id, token);
         if (boot == null) { stopSelfResult(startId); return START_NOT_STICKY; }

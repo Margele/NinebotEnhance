@@ -60,6 +60,7 @@ public final class PhoneStatus {
     }
     /** One display-info listener on the worker thread for the current data SIM; re-registered when that SIM changes. */
     private void listenDisplayInfo(TelephonyManager tm,int subscription){
+        if(android.os.Build.VERSION.SDK_INT<31)return; // TelephonyCallback exists from Android 12; the generation label stays empty before it.
         if(displayCallback!=null&&displaySubscription==subscription)return;
         try{
             if(displayCallback!=null&&displayManager!=null)displayManager.unregisterTelephonyCallback(displayCallback);

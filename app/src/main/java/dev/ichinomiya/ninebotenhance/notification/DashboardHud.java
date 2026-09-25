@@ -1,5 +1,7 @@
 package dev.ichinomiya.ninebotenhance.notification;
 
+import dev.ichinomiya.ninebotenhance.ipc.Ipc;
+
 import android.graphics.*;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -54,6 +56,8 @@ public final class DashboardHud {
     private final BmsCardPainter bmsPainter=new BmsCardPainter();
     public synchronized void setBmsLayout(BmsCard.Layout value){if(value!=null&&!bmsLayout.equals(value)){bmsLayout=value;revision++;}}
     private boolean bmsFresh(long now){return bms.connected(now,bmsPollMs*3L+1000);}
+    /** The BMS reading while the link is alive and its data recent, NONE otherwise; the drawn picture takes its charge level from it. */
+    public synchronized BmsState bmsIfFresh(long now){return bmsFresh(now)?bms:BmsState.NONE;}
     private boolean voltageFromBms(long now){return widgets.enabled(WidgetSettings.VOLTAGE_FROM_BMS)&&bmsFresh(now);}
     private boolean powerFromBms(long now){return widgets.enabled(WidgetSettings.POWER_FROM_BMS)&&bmsFresh(now);}
     private float voltageValue(long now){if(voltageFromBms(now))return bms.data().volts();return expired(battery.voltage(),now)?Float.NaN:battery.voltage().number();}
@@ -130,7 +134,7 @@ public final class DashboardHud {
         }else musicKeyShown="";
         if(!sameMusic(music,nextMusic)){music=nextMusic;revision++;}else music=nextMusic;
         long nextArt=music==null?-1:music.getLong("art_revision",-1);
-        if(nextArt!=artRevision){artRevision=nextArt;artwork=music==null?null:music.getParcelable("art",Bitmap.class);revision++;}
+        if(nextArt!=artRevision){artRevision=nextArt;artwork=music==null?null:Ipc.parcelable(music, "art", Bitmap.class);revision++;}
         Bundle lampState=state.getBundle("lamp");
         LampState nextLamp=lampState==null?LampState.NONE:new LampState(lampState.getInt("phase"),lampState.getInt("position",-1),
                 lampState.getInt("speed",-1),lampState.getInt("low",-1),lampState.getInt("high",-1),lampState.getString("detail",""));
@@ -156,7 +160,7 @@ public final class DashboardHud {
         // Simulated cards are local and outlive a disabled mailbox until they expire on their own.
         // Card motions start at the snapshot time rather than at the next render, so sparse renders still animate correctly.
         if(!receiving){if(now>=simulatedUntil&&!timeline.empty(now)){timeline.clear();revision++;}sync(now);return;}
-        ArrayList<Bundle> events=state.getParcelableArrayList("events",Bundle.class);if(events==null){sync(now);return;}
+        ArrayList<Bundle> events=Ipc.parcelableList(state, "events", Bundle.class);if(events==null){sync(now);return;}
         for(Bundle e:events){long seq=e.getLong("seq",-1);if(seq<=previousCursor)continue;previousCursor=seq;
             String key=e.getString("key","");if(e.getBoolean("removed"))timeline.remove(key,now);else{
             int duration=Math.max(1000,Math.min(60000,e.getInt("duration",15000)));
@@ -291,7 +295,7 @@ public final class DashboardHud {
     private Bitmap card(Bundle b){
         int width=SidebarLayout.notificationWidth(notificationWidth,halfScreen),height=(int)SidebarLayout.NOTIFICATION_HEIGHT;Bitmap bitmap=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);bitmap.setDensity(Bitmap.DENSITY_NONE);Canvas c=new Canvas(bitmap);surface(c,0,0,width,height,12);
         paint.setColor(p.accent());c.drawRoundRect(0,12,2,48,1,1,paint);
-        Bitmap icon=b.getParcelable("icon",Bitmap.class);if(icon!=null&&!icon.isRecycled())c.drawBitmap(icon,null,new RectF(12,12,48,48),paint);else{paint.setColor(p.iconBox());c.drawRoundRect(12,12,48,48,10,10,paint);write(c,"N",23,37,18,p.iconGlyph(),true);}
+        Bitmap icon=Ipc.parcelable(b, "icon", Bitmap.class);if(icon!=null&&!icon.isRecycled())c.drawBitmap(icon,null,new RectF(12,12,48,48),paint);else{paint.setColor(p.iconBox());c.drawRoundRect(12,12,48,48,10,10,paint);write(c,"N",23,37,18,p.iconGlyph(),true);}
         String app=fit(b.getString("app",""),Math.min(120,(width-80)*.4f),13,false);float appWidth=measure(app,13,false);write(c,app,width-12-appWidth,22,13,p.label(),false);
         String title=b.getString("title","");if(title.isEmpty())title=b.getString("app","");write(c,fit(title,width-appWidth-76,17,true),58,26,17,p.text(),true);
         write(c,fit(b.getString("text",""),width-70,15,false),58,48,15,p.body(),false);return bitmap;

@@ -2,16 +2,16 @@ package dev.ichinomiya.ninebotenhance.core;
 
 /** Exact selected backend only. A lost Root connection must be checked before deciding it is denied. */
 public final class StartPermission {
-    public enum Backend { NONE, ROOT, SHIZUKU, MEDIA_PROJECTION }
-    public static Backend select(PrivilegeMode mode, boolean shizukuReady, boolean rootReady) {
-        if (mode == PrivilegeMode.NONE) return Backend.MEDIA_PROJECTION;
+    public enum Backend { NONE, ROOT, SHIZUKU, MEDIA_PROJECTION, DRAW }
+    public static Backend select(PictureSource source, PrivilegeMode mode, boolean shizukuReady, boolean rootReady) {
+        if (source == null || mode == null) throw new IllegalArgumentException("Missing picture source or privilege mode");
+        if (source == PictureSource.CAST) return Backend.MEDIA_PROJECTION;
+        if (source == PictureSource.DRAW) return Backend.DRAW;
         if (mode == PrivilegeMode.SHIZUKU) return shizukuReady ? Backend.SHIZUKU : Backend.NONE;
-        if (mode == PrivilegeMode.ROOT) return rootReady ? Backend.ROOT : Backend.NONE;
-        if (mode != PrivilegeMode.AUTO) throw new IllegalArgumentException("Missing privilege mode");
-        return shizukuReady ? Backend.SHIZUKU : rootReady ? Backend.ROOT : Backend.NONE;
+        return rootReady ? Backend.ROOT : Backend.NONE;
     }
-    public static boolean needsRootCheck(PrivilegeMode mode, boolean shizukuReady, boolean rootReady) {
-        return select(mode, shizukuReady, rootReady) == Backend.NONE && mode != PrivilegeMode.SHIZUKU;
+    public static boolean needsRootCheck(PictureSource source, PrivilegeMode mode, boolean shizukuReady, boolean rootReady) {
+        return select(source, mode, shizukuReady, rootReady) == Backend.NONE && mode == PrivilegeMode.ROOT;
     }
     /** One user-initiated preflight, including asynchronous connection recovery and cancellation. */
     public static final class Check {

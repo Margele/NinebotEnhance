@@ -100,6 +100,7 @@ public final class RootSession {
         Bundle data = new Bundle(); Ipc.settings(data, settings());
         data.putString(AppCatalog.SELECTED, context.getSharedPreferences("virtual_display", 0).getString(AppCatalog.SELECTED, ""));
         data.putString("privilege_mode", PrivilegeManager.mode(context).name());
+        data.putString(dev.ichinomiya.ninebotenhance.core.PictureSource.KEY, PrivilegeManager.source(context).name());
         return data;
     }
     public void saveSettings(DisplaySettings value, String selected) {
@@ -127,7 +128,7 @@ public final class RootSession {
             Bundle permission = PrivilegeManager.status(context);
             if (!permission.getBoolean("start_allowed")) throw new IllegalStateException(permission.getString("start_permission_message"));
             authorized = StartPermission.Backend.valueOf(permission.getString("start_backend"));
-            if (authorized == StartPermission.Backend.MEDIA_PROJECTION) throw new IllegalStateException("录屏模式不能创建独立虚拟屏");
+            if (authorized == StartPermission.Backend.MEDIA_PROJECTION || authorized == StartPermission.Backend.DRAW) throw new IllegalStateException("当前画面提供方式不创建独立虚拟屏");
             app = AppCatalog.requireLauncher(context.getPackageManager(), selected);
         }
         catch (RuntimeException e) { output.release(); throw e; }
@@ -244,9 +245,9 @@ public final class RootSession {
     public synchronized boolean ready(String id) { return lease.owns(id) && lease.isReady(); }
     public synchronized int displayId() { return displayId; }
     public synchronized String state() { return state; }
-    public synchronized void savePrivilege(String mode) {
+    public synchronized void savePrivilege(String source, String mode) {
         if (lease.request() != null) throw new IllegalStateException("请先结束投屏再修改授权方式");
-        PrivilegeManager.save(context, mode);
+        PrivilegeManager.save(context, source, mode);
     }
     public String previousExit() { return previousExit; }
     public void stopCurrent(String reason) { String request; synchronized (this) { request = lease.request(); } stop(request, reason); }

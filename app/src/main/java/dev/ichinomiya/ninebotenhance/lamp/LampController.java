@@ -1,5 +1,9 @@
 package dev.ichinomiya.ninebotenhance.lamp;
 
+import dev.ichinomiya.ninebotenhance.platform.BlePermissions;
+
+import dev.ichinomiya.ninebotenhance.platform.Gatt;
+
 import android.Manifest;
 import android.bluetooth.*;
 import android.bluetooth.le.*;
@@ -118,10 +122,10 @@ public final class LampController {
     private boolean held(){return SystemClock.elapsedRealtime()<heldUntil();}
     private static void log(String message){android.util.Log.i(Protocol.TAG,"LAMP "+message);}
     public boolean permitted(){
-        return context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)==PackageManager.PERMISSION_GRANTED;
+        return BlePermissions.connectGranted(context);
     }
     public boolean scanPermitted(){
-        return context.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN)==PackageManager.PERMISSION_GRANTED;
+        return BlePermissions.scanGranted(context);
     }
     private BluetoothAdapter adapter(){
         try{BluetoothManager manager=context.getSystemService(BluetoothManager.class);return manager==null?null:manager.getAdapter();}
@@ -196,7 +200,7 @@ public final class LampController {
         int type=(writeCharacteristic.getProperties()&BluetoothGattCharacteristic.PROPERTY_WRITE)!=0
                 ?BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT:BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE;
         try{
-            int status=gatt.writeCharacteristic(writeCharacteristic,frame,type);
+            int status=Gatt.write(gatt,writeCharacteristic,frame,type);
             log("write "+hex(frame)+" type="+type+" status="+status);
             if(status!=BluetoothStatusCodes.SUCCESS){writing=false;publish(state.withPhase(state.phase(),"写入被拒绝 "+status));return;}
             worker.removeCallbacks(writeWatchdog);worker.postDelayed(writeWatchdog,WRITE_TIMEOUT_MS);
@@ -352,7 +356,7 @@ public final class LampController {
                     boolean enabled=g.setCharacteristicNotification(notify,true);
                     BluetoothGattDescriptor cccd=notify.getDescriptor(UUID.fromString(TxLampProtocol.CCCD));
                     if(cccd==null){close("通知描述符缺失");return;}
-                    int subscribed=g.writeDescriptor(cccd,BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                    int subscribed=Gatt.writeDescriptor(g,cccd,BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
                     log("notify enabled="+enabled+" cccd write="+subscribed);
                 }catch(RuntimeException e){close(error(e));}
             });
@@ -370,6 +374,9 @@ public final class LampController {
         }
         @Override public void onCharacteristicChanged(BluetoothGatt g,BluetoothGattCharacteristic ch,byte[] value){
             worker.post(()->{if(g==gatt)received(value);});
+        }
+        @Override public void onCharacteristicChanged(BluetoothGatt g,BluetoothGattCharacteristic ch){
+            if(!Gatt.legacyCallbacks())return;byte[] value=ch.getValue();worker.post(()->{if(g==gatt)received(value);});
         }
     };
     /**

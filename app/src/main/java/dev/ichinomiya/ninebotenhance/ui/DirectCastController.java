@@ -1,5 +1,7 @@
 package dev.ichinomiya.ninebotenhance.ui;
 
+import dev.ichinomiya.ninebotenhance.core.PictureSource;
+
 import dev.ichinomiya.ninebotenhance.client.FrameClient;
 import dev.ichinomiya.ninebotenhance.client.ServiceBridge;
 import dev.ichinomiya.ninebotenhance.core.DirectSession;
@@ -68,7 +70,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
     }
     /** Button faces for one installed row; the injector also refreshes them once a second while the row is on screen. */
     public void decorate(VehicleCardInjector.Row row) {
-        boolean virtual = frames.cachedPrivilege().usesVirtualDisplay(), running = session.displayRunning();
+        boolean virtual = frames.cachedSource().virtual(), running = session.displayRunning();
         ImageButton display = row.display(); String face = running ? "running" : "idle";
         if (!face.equals(display.getTag())) { display.setTag(face); display.setImageDrawable(new MirrorUi.Glyph("display", running ? row.theme().accent : row.theme().secondary)); }
         display.setContentDescription(running ? "虚拟显示器预览" : "启动虚拟显示器");
@@ -97,7 +99,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
         if (!compatible.getAsBoolean() || !usable(activity)) return;
         if (permissionCheck.active()) { cancelPermissionCheck(); return; }
         if (session.displayRunning()) { showPreview(activity); return; }
-        if (!frames.cachedPrivilege().usesVirtualDisplay()) { toast(activity, "录屏模式没有虚拟显示器"); return; }
+        if (!frames.cachedSource().virtual()) { toast(activity, "当前画面提供方式没有虚拟显示器"); return; }
         autostartPrompt(activity);
         checkPermission(activity, anchor, () -> { if (!session.displayRunning()) beginDisplay(activity, true); });
     }
@@ -106,7 +108,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
         String request = UUID.randomUUID().toString().replace("-", "");
         if (!session.beginDisplay(request)) return;
         captureMissingSince = 0; previewRecreateUntil = 0; previewLandscape = false;
-        frames.report("DISPLAY begin " + (withPreview ? "from its button" : "for a cast") + (frames.cachedPrivilege().usesVirtualDisplay() ? "" : " (recording)"));
+        frames.report("DISPLAY begin " + (withPreview ? "from its button" : "for a cast") + " (" + frames.cachedSource().name() + ")");
         frames.startDirect(request, activity, error -> {
             if (!session.ownsDisplay(request)) return;
             if (error != null) { endDisplay(request, error); return; }
@@ -250,7 +252,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
             case READY: attach(request); break;
             case STARTING: frames.report("DIRECT vehicle checks passed; waiting for the virtual display"); break;
             default:
-                frames.report("DIRECT vehicle checks passed; starting the " + (frames.cachedPrivilege().usesVirtualDisplay() ? "virtual display" : "recording") + " for the cast");
+                frames.report("DIRECT vehicle checks passed; starting the " + frames.cachedSource().name() + " picture for the cast");
                 beginDisplay(cruiseActivity.get(), false);
         }
     }
@@ -302,8 +304,8 @@ public final class DirectCastController implements Application.ActivityLifecycle
         frames.report("DIRECT ended: " + message);
         if (withDisplay) return;
         injector.refresh();
-        // A recording session is nothing but the cast, so it ends with it; the virtual display stays.
-        if (frames.screenCapture() && session.displayRunning()) { endDisplay(session.displayRequest(), message); return; }
+        // A recording or drawing session is nothing but the cast, so it ends with it; the virtual display stays.
+        if (!frames.cachedSource().virtual() && session.displayRunning()) { endDisplay(session.displayRequest(), message); return; }
         toast(message);
     }
     private void closePanel() {
@@ -524,8 +526,10 @@ public final class DirectCastController implements Application.ActivityLifecycle
         Button encoder=new Button(activity);encoder.setText("设置覆盖");theme.button(encoder,null);
         Button hidden=new Button(activity);hidden.setText("隐藏功能");theme.button(hidden,null);
         Button touch=new Button(activity);touch.setText("触摸屏管理");theme.button(touch,null);
-        buttonRow(activity, layout, 12, new Button[]{widgets, encoder, hidden, touch});
+        Button drawing=new Button(activity);drawing.setText("绘制管理");theme.button(drawing,null);
+        buttonRow(activity, layout, 12, new Button[]{widgets, drawing, encoder, hidden, touch});
         widgets.setOnClickListener(v->WidgetSettingsDialog.show(activity,frames,card));
+        drawing.setOnClickListener(v->DrawSettingsDialog.show(activity,frames,card));
         encoder.setOnClickListener(v->EncoderOverrideDialog.show(activity,frames,card,!session.displayRunning()));
         hidden.setOnClickListener(v->HiddenFeatureDialog.show(activity,frames,card));
         touch.setOnClickListener(v->frames.touchSettings(activity,theme.dark));
@@ -574,8 +578,10 @@ public final class DirectCastController implements Application.ActivityLifecycle
         Button save = footer.save; save.setEnabled(false);
         boolean[] loaded = {false};DisplaySettings[] loadedValue={null};
         Runnable showMode = () -> {
-            boolean virtual = frames.cachedPrivilege().usesVirtualDisplay();
-            for (View field : new View[]{appLabel,appPicker,touch})field.setVisibility(virtual?View.VISIBLE:View.GONE);
+            // Cards and the touch panel belong to the virtual display; the drawn picture has its own page; the capture has neither.
+            PictureSource source = frames.cachedSource();
+            for (View field : new View[]{appLabel,appPicker,touch,widgets})field.setVisibility(source.virtual()?View.VISIBLE:View.GONE);
+            drawing.setVisibility(source.draws()?View.VISIBLE:View.GONE);
         };
         showMode.run();
         Runnable read = () -> {
@@ -590,7 +596,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
                         ||!vw.equals(virtualWidth.getText().toString())||!vh.equals(virtualHeight.getText().toString())||color!=topColor.color()||light!=lightColor.color()||keep!=keepDpi.isChecked();
                 if (!edited) { width.setText(String.valueOf(value.width)); height.setText(String.valueOf(value.height)); dpi.setText(String.valueOf(value.dpi));
                     virtualWidth.setText(String.valueOf(value.virtualWidth));virtualHeight.setText(String.valueOf(value.virtualHeight));topColor.setBandColor(value.backgroundColor);lightColor.setBandColor(value.lightBackgroundColor);keepDpi.setChecked(value.keepPhoneDpi); }
-                ArrayList<Bundle> catalog = config.getParcelableArrayList(AppCatalog.APPS, Bundle.class);
+                ArrayList<Bundle> catalog = Ipc.parcelableList(config, AppCatalog.APPS, Bundle.class);
                 String selected = config.getString(AppCatalog.SELECTED, "");
                 apps.clear(); apps.add(null);
                 int selectedIndex = 0;
@@ -604,7 +610,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
                 appPicker.setEnabled(idle);
                 width.setEnabled(idle);height.setEnabled(idle);dpi.setEnabled(idle);virtualWidth.setEnabled(idle);virtualHeight.setEnabled(idle);topColor.setEnabled(idle);lightColor.setEnabled(idle);keepDpi.setEnabled(idle);
                 showMode.run();
-                connection.setText(!frames.cachedPrivilege().usesVirtualDisplay() ? "当前方式：无（投屏）。\n开始时通过系统窗口选择单个应用或整个屏幕。"
+                connection.setText(!frames.cachedSource().virtual() ? "当前方式：" + frames.cachedSource().label() + "。" + (frames.cachedSource().captures() ? "\n开始时通过系统窗口选择单个应用或整个屏幕。" : "")
                         : "已读取: 整帧 "+value.width+" × "+value.height+"，虚拟屏 "+value.virtualWidth+" × "+value.virtualHeight+"，"+value.dpi+" DPI"+(value.keepPhoneDpi?"，保持手机 DPI":"")+"。"+(edited?"\n保留你刚输入的内容。":"")
                         + (apps.size() == 1 ? "\n请选择启动应用并允许读取应用列表。" : selectedIndex == 0
                             ? (selected.isEmpty() ? "\n请先选择启动应用。" : "\n原应用入口已不可用，请重新选择。") : "")
@@ -637,7 +643,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
         save.setOnClickListener(v -> {
             if (!loaded[0]) return;
             if (session.displayRunning()) { toast(activity, "请先关闭虚拟显示器再修改设置"); return; }
-            if (!frames.cachedPrivilege().usesVirtualDisplay()) { dialog.dismiss(); return; }
+            if (!frames.cachedSource().virtual()) { dialog.dismiss(); return; }
             int index = appPicker.getSelectedItemPosition();
             if (index <= 0 || index >= apps.size()) { toast(activity, "请先选择启动应用"); return; }
             String selected = apps.get(index).getString("component");

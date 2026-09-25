@@ -45,12 +45,12 @@ final class AuthorizationTests {
         @Override public void destroy() { dead = true; try { output.close(); } catch (IOException ignored) {} }
     }
     static void run() throws Exception {
-        check(StartPermission.needsRootCheck(PrivilegeMode.ROOT, false, false), "lost Root connection triggers a real check without manual verification");
-        check(StartPermission.needsRootCheck(PrivilegeMode.ROOT, true, false), "explicit Root mode checks Root even when Shizuku is granted");
-        check(StartPermission.needsRootCheck(PrivilegeMode.AUTO, false, false), "AUTO checks Root when Shizuku is unavailable");
-        check(!StartPermission.needsRootCheck(PrivilegeMode.AUTO, true, false), "authorized Shizuku does not invoke su");
-        check(!StartPermission.needsRootCheck(PrivilegeMode.SHIZUKU, false, false), "explicit Shizuku mode never checks Root");
-        check(!StartPermission.needsRootCheck(PrivilegeMode.ROOT, false, true), "live verified connection does not invoke su again");
+        check(StartPermission.needsRootCheck(PictureSource.VIRTUAL, PrivilegeMode.ROOT, false, false), "lost Root connection triggers a real check without manual verification");
+        check(StartPermission.needsRootCheck(PictureSource.VIRTUAL, PrivilegeMode.ROOT, true, false), "explicit Root mode checks Root even when Shizuku is granted");
+        check(!StartPermission.needsRootCheck(PictureSource.VIRTUAL, PrivilegeMode.SHIZUKU, false, false), "explicit Shizuku mode never checks Root");
+        check(!StartPermission.needsRootCheck(PictureSource.VIRTUAL, PrivilegeMode.ROOT, false, true), "live verified connection does not invoke su again");
+        check(!StartPermission.needsRootCheck(PictureSource.CAST, PrivilegeMode.ROOT, false, false) && !StartPermission.needsRootCheck(PictureSource.DRAW, PrivilegeMode.ROOT, false, false),
+                "sources without a daemon never check Root");
         StartPermission.Check gate = new StartPermission.Check();
         long firstCheck = gate.begin(100);
         check(gate.accept(firstCheck, false, true, 110) == StartPermission.Check.Result.WAIT && gate.active(), "checking a new connection is pending rather than denied");
@@ -68,12 +68,13 @@ final class AuthorizationTests {
         check(gate.accept(timed, true, false, 53001) == StartPermission.Check.Result.STALE, "late authorization cannot revive a timed-out cast");
         for (PrivilegeMode mode : PrivilegeMode.values()) for (boolean shizuku : new boolean[]{false, true}) for (boolean root : new boolean[]{false, true}) {
             StartPermission.Backend expected;
-            if (mode == PrivilegeMode.NONE) expected = StartPermission.Backend.MEDIA_PROJECTION;
-            else if (mode == PrivilegeMode.SHIZUKU) expected = shizuku ? StartPermission.Backend.SHIZUKU : StartPermission.Backend.NONE;
-            else if (mode == PrivilegeMode.ROOT) expected = root ? StartPermission.Backend.ROOT : StartPermission.Backend.NONE;
-            else expected = shizuku ? StartPermission.Backend.SHIZUKU : root ? StartPermission.Backend.ROOT : StartPermission.Backend.NONE;
-            check(StartPermission.select(mode, shizuku, root) == expected, "preflight respects chosen mode and only existing authorization");
+            if (mode == PrivilegeMode.SHIZUKU) expected = shizuku ? StartPermission.Backend.SHIZUKU : StartPermission.Backend.NONE;
+            else expected = root ? StartPermission.Backend.ROOT : StartPermission.Backend.NONE;
+            check(StartPermission.select(PictureSource.VIRTUAL, mode, shizuku, root) == expected, "preflight respects chosen mode and only existing authorization");
         }
+        check(PrivilegeMode.values().length == 2 && PrivilegeMode.read("AUTO", PrivilegeMode.ROOT) == PrivilegeMode.ROOT
+                && PrivilegeMode.read("NONE", PrivilegeMode.SHIZUKU) == PrivilegeMode.SHIZUKU && PrivilegeMode.read("SHIZUKU", PrivilegeMode.ROOT) == PrivilegeMode.SHIZUKU,
+                "the old automatic and recording modes read as the fallback backend");
         FakeProcess process = new FakeProcess();
         try (AuthorizedShell shell = new AuthorizedShell(process)) {
             String hello = process.command();

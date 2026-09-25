@@ -28,14 +28,14 @@ final class LogExporter {
                 if (completed.get()) return;
                 Bundle prepared = bridge.call(Protocol.LOG_EXPORT_BEGIN, new Bundle());
                 ticket.putString("log_token", prepared.getString("log_token"));
-                ParcelFileDescriptor fd = prepared.getParcelable("log_fd", ParcelFileDescriptor.class);
+                ParcelFileDescriptor fd = Ipc.parcelable(prepared, "log_fd", ParcelFileDescriptor.class);
                 if (fd == null) throw new IOException("模块未返回日志文件");
                 try (OutputStream output = new ParcelFileDescriptor.AutoCloseOutputStream(fd)) {
                     if (completed.get()) return;
                     output.write(local.getBytes(StandardCharsets.UTF_8)); output.flush();
                 }
                 if (completed.get()) return;
-                Uri uri = bridge.call(Protocol.LOG_EXPORT_FINISH, ticket).getParcelable("log_uri", Uri.class);
+                Uri uri = Ipc.parcelable(bridge.call(Protocol.LOG_EXPORT_FINISH, ticket), "log_uri", Uri.class);
                 if (uri == null) throw new IOException("模块未返回分享地址");
                 published = true;
                 main.post(() -> { if (completed.compareAndSet(false, true)) { main.removeCallbacks(timeout); done.accept(uri); } });

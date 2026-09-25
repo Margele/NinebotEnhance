@@ -26,6 +26,8 @@ public final class Protocol {
     /** Touch panel calibration from the preview toolbar: enter / leave the tapping mode, then store the solved map. */
     public static final int TOUCH_CALIBRATE = 28, TOUCH_CALIBRATION = 29;
     public static final String SCREEN_CAPTURE = "screen_capture", CAPTURE_WIDTH = "capture_width", CAPTURE_HEIGHT = "capture_height";
+    /** Status flag of the drawn picture source: the host paints the frame itself, nothing is captured. */
+    public static final String DRAWN = "drawn";
     public static final String CAPTURE_REVISION = "capture_revision", CAPTURE_CONSENT = "capture_consent";
     public static final int ROOT_STOP = 30, ROOT_INPUT = 32, ROOT_KEY = 33, ROOT_RESTART_APP = 34;
     public static final int ROOT_TEXT = 35, ROOT_TYPING_KEY = 36, ROOT_DELETE = 37;

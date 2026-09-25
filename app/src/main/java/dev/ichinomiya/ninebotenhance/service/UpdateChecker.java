@@ -1,5 +1,7 @@
 package dev.ichinomiya.ninebotenhance.service;
 
+import dev.ichinomiya.ninebotenhance.core.Streams;
+
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Bundle;
@@ -49,7 +51,7 @@ public final class UpdateChecker {
             int status = connection.getResponseCode();
             if (status != 200) throw new IllegalStateException("HTTP " + status);
             String body;
-            try (InputStream in = connection.getInputStream()) { body = new String(in.readNBytes(256 * 1024), StandardCharsets.UTF_8); }
+            try (InputStream in = connection.getInputStream()) { body = new String(Streams.readAll(in, 256 * 1024), StandardCharsets.UTF_8); }
             UpdateCheck.Release release = UpdateCheck.fromJson(body);
             if (release == null) throw new IllegalStateException("no usable release in the answer");
             context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit().putString("latest", release.version()).putString("url", release.url())

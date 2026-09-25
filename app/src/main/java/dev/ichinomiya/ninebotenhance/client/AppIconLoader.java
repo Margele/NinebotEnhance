@@ -1,5 +1,7 @@
 package dev.ichinomiya.ninebotenhance.client;
 
+import dev.ichinomiya.ninebotenhance.ipc.Ipc;
+
 import dev.ichinomiya.ninebotenhance.client.ServiceBridge;
 import dev.ichinomiya.ninebotenhance.ipc.Protocol;
 import dev.ichinomiya.ninebotenhance.platform.AppCatalog;
@@ -33,7 +35,7 @@ public final class AppIconLoader {
             try {
                 if (bridge.connected()) {
                     Bundle args = new Bundle(); args.putString(AppCatalog.SELECTED, component);
-                    bitmap = bridge.call(Protocol.APP_ICON, args).getParcelable("icon", Bitmap.class);
+                    bitmap = Ipc.parcelable(bridge.call(Protocol.APP_ICON, args), "icon", Bitmap.class);
                 }
             } catch (Exception ignored) { /* Keep the generic icon; settings and selection remain usable. */ }
             Bitmap result = bitmap;

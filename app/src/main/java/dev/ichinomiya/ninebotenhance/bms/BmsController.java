@@ -1,5 +1,9 @@
 package dev.ichinomiya.ninebotenhance.bms;
 
+import dev.ichinomiya.ninebotenhance.platform.BlePermissions;
+
+import dev.ichinomiya.ninebotenhance.platform.Gatt;
+
 import android.Manifest;
 import android.bluetooth.*;
 import android.bluetooth.le.*;
@@ -84,8 +88,8 @@ public final class BmsController {
     private long heldUntil(){long until=0;for(long value:holds)until=Math.max(until,value);return until;}
     private boolean held(){return SystemClock.elapsedRealtime()<heldUntil();}
     private static void log(String message){android.util.Log.i(Protocol.TAG,"BMS "+message);}
-    public boolean permitted(){return context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)==PackageManager.PERMISSION_GRANTED;}
-    public boolean scanPermitted(){return context.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN)==PackageManager.PERMISSION_GRANTED;}
+    public boolean permitted(){return BlePermissions.connectGranted(context);}
+    public boolean scanPermitted(){return BlePermissions.scanGranted(context);}
     private BluetoothAdapter adapter(){
         try{BluetoothManager manager=context.getSystemService(BluetoothManager.class);return manager==null?null:manager.getAdapter();}
         catch(RuntimeException e){return null;}
@@ -167,7 +171,7 @@ public final class BmsController {
         byte[] part=Arrays.copyOfRange(pending,pendingOffset,pendingOffset+chunk);
         writing=true;
         try{
-            int status=gatt.writeCharacteristic(writeCharacteristic,part,writeType);
+            int status=Gatt.write(gatt,writeCharacteristic,part,writeType);
             if(status!=BluetoothStatusCodes.SUCCESS){writing=false;pending=null;log("write rejected "+status);publish(state.withPhase(state.phase(),"写入被拒绝 "+status));return;}
             pendingOffset+=chunk;if(pendingOffset>=pending.length)pending=null;
             worker.removeCallbacks(writeWatchdog);worker.postDelayed(writeWatchdog,WRITE_TIMEOUT_MS);
@@ -265,7 +269,7 @@ public final class BmsController {
                     g.setCharacteristicNotification(notifyCharacteristic,true);
                     BluetoothGattDescriptor cccd=notifyCharacteristic.getDescriptor(UUID.fromString(DlBmsProtocol.CCCD));
                     if(cccd==null){close("通知描述符缺失");return;}
-                    g.writeDescriptor(cccd,BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                    Gatt.writeDescriptor(g,cccd,BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
                 }catch(RuntimeException e){close(error(e));}
             });
         }
@@ -292,6 +296,9 @@ public final class BmsController {
         }
         @Override public void onCharacteristicChanged(BluetoothGatt g,BluetoothGattCharacteristic ch,byte[] value){
             worker.post(()->{if(g==gatt)received(value);});
+        }
+        @Override public void onCharacteristicChanged(BluetoothGatt g,BluetoothGattCharacteristic ch){
+            if(!Gatt.legacyCallbacks())return;byte[] value=ch.getValue();worker.post(()->{if(g==gatt)received(value);});
         }
     };
     /** Notifications are pieces of one frame; plain frames are parsed as they complete, encrypted ones once whole blocks decrypt to a complete frame. */

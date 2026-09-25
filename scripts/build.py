@@ -73,7 +73,7 @@ def main():
         manifest_root.set('{http://schemas.android.com/apk/res/android}versionCode',code)
         build_manifest=work/'AndroidManifest.xml';manifest_source.write(build_manifest,encoding='utf-8',xml_declaration=True)
         run([tool(bt,'aapt2'),'link','-I',android,'--manifest',build_manifest,'--java',generated,
-             '--min-sdk-version','34','--target-sdk-version','36','-o',work/'base.apk',work/'resources.zip'],records)
+             '--min-sdk-version','30','--target-sdk-version','36','-o',work/'base.apk',work/'resources.zip'],records)
         sources=sorted((ROOT/'app/src/main/java').rglob('*.java'))+sorted(generated.rglob('*.java'))
         response=work/'sources.rsp';response.write_text('\n'.join('"'+p.as_posix()+'"' for p in sources),encoding='utf-8')
         run([tool(jdk/'bin','javac'),'-encoding','UTF-8','--release','17','-classpath',os.pathsep.join(map(str,[android]+compile_only+runtime)),'-d',classes,'@'+str(response)],records)
@@ -86,7 +86,7 @@ def main():
         jar=work/'program.jar'
         with zipfile.ZipFile(jar,'w',zipfile.ZIP_DEFLATED) as archive:
             for p in sorted(classes.rglob('*.class')):archive.write(p,p.relative_to(classes).as_posix())
-        run([tool(jdk/'bin','java'),'-cp',bt/'lib/d8.jar','com.android.tools.r8.D8','--release','--min-api','34','--lib',android,
+        run([tool(jdk/'bin','java'),'-cp',bt/'lib/d8.jar','com.android.tools.r8.D8','--release','--min-api','30','--lib',android,
              '--classpath',compile_only[0],'--classpath',compile_only[1],'--output',dex,jar]+runtime,records)
         unsigned=work/'unsigned.apk';shutil.copyfile(work/'base.apk',unsigned)
         resources=ROOT/'app/src/main/resources'
@@ -127,7 +127,7 @@ def main():
             assert archive.read('META-INF/xposed/scope.list').split()==[b'cn.ninebot.ninebot',b'com.autonavi.minimap',b'com.tencent.map',b'com.baidu.BaiduMap']
             assert b'staticScope=true' in archive.read('META-INF/xposed/module.prop').splitlines()
             definitions=set().union(*(defined_classes(archive.read(n)) for n in archive.namelist() if re.fullmatch(r'classes\d*\.dex',n)))
-            for required in ['hook/MirrorModule','service/FrameBridgeService','service/RootBridgeProvider','display/RootDisplayMain','privilege/PrivilegeManager','privilege/PrivilegedLauncher','privilege/RootAuthorization','core/AuthorizedShell','core/StartPermission','core/FramePacer','diagnostics/StreamStats','hook/StatisticsHooks','ui/StatisticsDialog','hook/EncodingHooks','diagnostics/EncodingDiagnostics','diagnostics/EncodingFormat','diagnostics/CaptureConfigReader','diagnostics/WeakIdentityMap','lamp/LampController','ui/LampSettingsActivity','core/TxLampProtocol']:
+            for required in ['hook/MirrorModule','service/FrameBridgeService','service/RootBridgeProvider','display/RootDisplayMain','privilege/PrivilegeManager','privilege/PrivilegedLauncher','privilege/RootAuthorization','core/AuthorizedShell','core/StartPermission','core/PictureSource','core/DrawSettings','core/DrawLayout','notification/DrawPanel','service/DrawSession','ui/DrawSettingsDialog','platform/Gatt','platform/BlePermissions','core/Streams','core/FramePacer','diagnostics/StreamStats','hook/StatisticsHooks','ui/StatisticsDialog','hook/EncodingHooks','diagnostics/EncodingDiagnostics','diagnostics/EncodingFormat','diagnostics/CaptureConfigReader','diagnostics/WeakIdentityMap','lamp/LampController','ui/LampSettingsActivity','core/TxLampProtocol']:
                 assert 'L'+PACKAGE.replace('.','/')+'/'+required+';' in definitions,required
             for required in ['Lrikka/shizuku/Shizuku;','Lrikka/sui/Sui;','Lrikka/shizuku/ShizukuProvider;']:assert required in definitions
             for required in ['core/CaptureSize','core/ProjectionGrant','service/ProjectionSession','service/ScreenCaptureService','ui/ScreenCaptureConsentActivity','ui/RecordingPanel']:
