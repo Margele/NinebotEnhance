@@ -16,6 +16,7 @@ import javax.crypto.spec.SecretKeySpec;
 public final class DlBmsProtocol {
     public static final String SERVICE="0000ffe0-0000-1000-8000-00805f9b34fb",CHAR_WRITE="0000ffe1-0000-1000-8000-00805f9b34fb",CHAR_NOTIFY="0000ffe2-0000-1000-8000-00805f9b34fb";
     public static final String CCCD="00002902-0000-1000-8000-00805f9b34fb";
+    public static final BmsProtocol.Endpoint ENDPOINT=new BmsProtocol.Endpoint(SERVICE,CHAR_WRITE,CHAR_NOTIFY,false,false);
     public static final int FC_KEY=0x00,FC_NAME=0x01,FC_DATA=0x17;
     /** Advertisement: company id 0x6C64 ("dl") followed by "kjmk", the MAC and a flag byte; the device name is DL-BMS. */
     public static final int MANUFACTURER_ID=0x6C64;

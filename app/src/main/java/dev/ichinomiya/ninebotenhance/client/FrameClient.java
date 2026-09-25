@@ -83,6 +83,10 @@ public final class FrameClient {
     private volatile boolean naviLive = true;
     /** Dashboard theme chosen in the preview toolbar: the TFT day/night flag, the palette of the module's cards and the frame background. */
     private volatile boolean dashboardDark = true;
+    /** The screen profile page: the small screen draws the speed and battery blocks and starts without a launch app. */
+    private volatile boolean screenProfileSmall;
+    private Typeface fixedTypeface;
+    private boolean fixedTypefaceLoaded;
     private volatile java.util.function.BiConsumer<String, Boolean> themeSender = (vehicle, dark) -> {};
     private volatile NaviUpdate liveNavi;
     private volatile long liveNaviPolled, liveNaviLogged;
@@ -225,6 +229,12 @@ public final class FrameClient {
         float tx = t[0] < 0.5f ? cx + arm + 6f * scale : cx - arm - 6f * scale - targetText.measureText(label), ty = cy + targetText.getTextSize() / 3f;
         canvas.drawText(label, tx, ty, targetHalo); canvas.drawText(label, tx, ty, targetText);
     }
+    private static ActivityOptions backgroundStartMode(ActivityOptions options) {
+        if (Build.VERSION.SDK_INT < 34) return options;
+        return options.setPendingIntentBackgroundActivityStartMode(Build.VERSION.SDK_INT >= 36
+                ? ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE
+                : ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+    }
     public FrameClient(String process) {
         this.process = process;
         HandlerThread thread = new HandlerThread("Ninebot-VirtualFrames"); thread.start(); worker = new Handler(thread.getLooper());
@@ -354,6 +364,7 @@ public final class FrameClient {
     /** The module relayed the daemon's injection refusal; each distinct message is handed to the host UI once, on the main thread. */
     private volatile java.util.function.Consumer<String> inputDeniedListener=error->{};
     private String inputDeniedNotified="";
+    private boolean renderFallbackNoted;
     public DynamicViewFactory dynamicViewFactory(){return dynamicViewFactory;}
     public void setDynamicPageListener(Runnable listener){dynamicPageListener=listener==null?()->{}:listener;}
     public void setInputDeniedListener(java.util.function.Consumer<String> listener){inputDeniedListener=listener==null?error->{}:listener;}
@@ -461,17 +472,19 @@ public final class FrameClient {
                     DisplaySettings value = Ipc.settings(config); String selected = config.getString(AppCatalog.SELECTED, "");
                     savedPrivilege = PrivilegeMode.parse(config.getString("privilege_mode", "AUTO"));
                     screenCapture = !savedPrivilege.usesVirtualDisplay();
+                    applyScreenProfile(config);
                     if (screenCapture && activity == null)
                         throw new IllegalArgumentException("录屏模式只用于车辆投屏");
-                    if (!screenCapture && selected.isEmpty()) throw new IllegalArgumentException("请先在设置中选择启动应用并保存");
+                    if (!screenCapture && selected.isEmpty() && !screenProfileSmall) throw new IllegalArgumentException("请先在设置中选择启动应用并保存");
                     if (completed.get() || !request.equals(ownerRequest)) return;
                     loadDashboardLayout(battery.selectedKey());
                     settings = value.withFrame(frameWidth(), frameHeight()); cacheSettings(value, selected); closeFrames();
                     if (settings != value) report("LAYOUT frame " + settings.width + "x" + settings.height + " from the cast configuration");
-                    renderPlan = null;
+                    renderPlan = null; renderFallbackNoted = false;
                     int width = settings.virtualWidth, height = settings.virtualHeight;
-                    if (!screenCapture && settings.keepPhoneDpi) {
-                        // Keep-DPI: the display is created at the phone's density and the plan's logical size; the capture path scales it back.
+                    if (!screenCapture && settings.keepPhoneDpi && settings.compatScale) {
+                        // Keep-DPI, compat scaling: the display is created at the phone's density and the plan's logical size and the
+                        // capture path scales it back. Without it the daemon forces the logical size on the buffer-sized display instead.
                         DisplaySettings.RenderPlan plan = settings.renderPlan(phoneDensityDpi());
                         if (plan != null) { renderPlan = plan; width = plan.width(); height = plan.height(); report("RENDER plan " + width + "x" + height + "@" + plan.dpi() + " scaled into " + settings.virtualWidth + "x" + settings.virtualHeight); }
                     }
@@ -489,7 +502,7 @@ public final class FrameClient {
                     report("RGBA pacing targetFps=" + FramePacer.TARGET_FPS + " intervalMs=" + FramePacer.INTERVAL_MS + " policy=defer-latest");
                     if (completed.get() || !request.equals(ownerRequest)) { closeFrames(); return; }
                     Bundle args = Ipc.request(request); Ipc.settings(args, settings); args.putParcelable("surface", surface); args.putBinder("owner", owner);
-                    args.putString(AppCatalog.SELECTED, selected);
+                    args.putString(AppCatalog.SELECTED, screenProfileSmall ? "" : selected);
                     args.putBoolean(Protocol.SCREEN_CAPTURE, screenCapture);
                     args.putInt(Protocol.CAPTURE_WIDTH, width); args.putInt(Protocol.CAPTURE_HEIGHT, height);
                     if (renderPlan != null) args.putInt("render_dpi", renderPlan.dpi());
@@ -504,9 +517,7 @@ public final class FrameClient {
                             if (screenCapture) {
                                 if (consent == null || activity == null || activity.isFinishing() || activity.isDestroyed())
                                     throw new IllegalStateException("录屏授权入口已失效，请重新开始投屏");
-                                ActivityOptions options = ActivityOptions.makeBasic()
-                                        .setPendingIntentBackgroundActivityStartMode(Build.VERSION.SDK_INT >= 36
-                                                ? ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE : ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+                                ActivityOptions options = backgroundStartMode(ActivityOptions.makeBasic());
                                 activity.startIntentSenderForResult(consent.getIntentSender(), -1, null, 0, 0, 0, options.toBundle());
                             }
                             done.accept(null);
@@ -544,7 +555,8 @@ public final class FrameClient {
             Bitmap bitmap;
             if (renderPlan != null && !screenCapture) bitmap = composeScaled(plane, width, height, frameWidth, frameHeight);
             else {
-                PixelPacking.compose(plane.getBuffer(),plane.getRowStride(),plane.getPixelStride(),width,height,packed,frameWidth,frameHeight,frameHeight-settings.bottomInset-height,settings.background(dashboardDark),false);
+                // Edge healing only on the forced-size path: SurfaceFlinger's scaled projection leaves the outermost ring partly covered.
+                PixelPacking.compose(plane.getBuffer(),plane.getRowStride(),plane.getPixelStride(),width,height,packed,frameWidth,frameHeight,frameHeight-settings.bottomInset-height,settings.background(dashboardDark),!screenCapture&&settings.keepPhoneDpi&&!renderFallbackNoted);
                 bitmap = Bitmap.createBitmap(frameWidth,frameHeight,Bitmap.Config.ARGB_8888); bitmap.copyPixelsFromBuffer(packed);
             }
             bitmap.setDensity(Bitmap.DENSITY_NONE);
@@ -581,7 +593,7 @@ public final class FrameClient {
             drawTouchMarks(canvas, Math.round(r[2]-r[0]), SystemClock.elapsedRealtime());
             drawCalibrationTarget(canvas, Math.round(r[2]-r[0]), Math.round(r[3]-r[1]));
             // Without a cast the preview shows, on top of everything, what the vehicle dashboard itself paints over the frame.
-            if (!casting && !dev.ichinomiya.ninebotenhance.core.SidebarLayout.halfScreen(Math.round(r[2]-r[0]), Math.round(r[3]-r[1]))) dev.ichinomiya.ninebotenhance.notification.DashboardOcclusion.draw(canvas, Math.round(r[2]-r[0]), Math.round(r[3]-r[1]), hud.hillHold(SystemClock.elapsedRealtime()), hud.occlusions());
+            if (!casting && !hud.smallScreen() && !dev.ichinomiya.ninebotenhance.core.SidebarLayout.halfScreen(Math.round(r[2]-r[0]), Math.round(r[3]-r[1]))) dev.ichinomiya.ninebotenhance.notification.DashboardOcclusion.draw(canvas, Math.round(r[2]-r[0]), Math.round(r[3]-r[1]), hud.hillHold(SystemClock.elapsedRealtime()), hud.occlusions());
             canvas.restoreToCount(overlaySave);
             if (encoderOverride.previewStats()) drawStatistics(canvas, r[0], r[1]);
         }
@@ -699,6 +711,7 @@ public final class FrameClient {
     };
     private void acceptStatus(String request, Bundle status) {
         if (!request.equals(ownerRequest)) return;
+        applyScreenProfile(status);
         observeBroker(status);
         String observed = "active=" + status.getBoolean("active") + " ready=" + status.getBoolean("ready")
                 + " displayId=" + status.getInt("displayId", -1) + " " + status.getString("state", "")
@@ -711,6 +724,7 @@ public final class FrameClient {
             touchBound = status.getBoolean("touch_bound"); touchPresent = status.getBoolean("touch_present");
             String denied = status.getString("input_denied", "");
             if (!denied.isEmpty() && !denied.equals(inputDeniedNotified)) { inputDeniedNotified = denied; report("INPUT denied: " + denied); main.post(() -> inputDeniedListener.accept(denied)); }
+            if (status.getBoolean("render_fallback") && !renderFallbackNoted) { renderFallbackNoted = true; report("RENDER fallback: the forced logical size was refused, compat scaling is on from the next session"); }
         } else {
             active = displayReady = false; state = "模块服务已重启或会话已失效，请重新开始投屏";
             appRecovery = AppRecoveryState.HIDDEN; appRecoveryDetail = ""; touchBound = touchPresent = false;
@@ -878,8 +892,7 @@ public final class FrameClient {
             try {
                 PendingIntent intent = result.getParcelable("lamp_intent", PendingIntent.class);
                 if (intent == null) throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
-                ActivityOptions options = ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(Build.VERSION.SDK_INT >= 36
-                        ? ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE : ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+                ActivityOptions options = backgroundStartMode(ActivityOptions.makeBasic());
                 activity.startIntentSenderForResult(intent.getIntentSender(), -1, null, 0, 0, 0, options.toBundle());
             } catch (Exception e) { android.widget.Toast.makeText(activity, "无法打开大灯控制：" + Ipc.error(e), 1).show(); }
         }, error -> { if (!activity.isDestroyed()) android.widget.Toast.makeText(activity, error, 1).show(); });
@@ -892,8 +905,7 @@ public final class FrameClient {
             try{
                 PendingIntent intent=result.getParcelable("bms_intent",PendingIntent.class);
                 if(intent==null)throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
-                ActivityOptions options=ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(Build.VERSION.SDK_INT>=36
-                        ?ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE:ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+                ActivityOptions options=backgroundStartMode(ActivityOptions.makeBasic());
                 activity.startIntentSenderForResult(intent.getIntentSender(),-1,null,0,0,0,options.toBundle());
             }catch(Exception e){android.widget.Toast.makeText(activity,"无法打开 BMS 管理："+Ipc.error(e),1).show();}
         },error->{if(!activity.isDestroyed())android.widget.Toast.makeText(activity,error,1).show();});
@@ -906,11 +918,23 @@ public final class FrameClient {
             try{
                 PendingIntent intent=result.getParcelable("touch_intent",PendingIntent.class);
                 if(intent==null)throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
-                ActivityOptions options=ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(Build.VERSION.SDK_INT>=36
-                        ?ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE:ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+                ActivityOptions options=backgroundStartMode(ActivityOptions.makeBasic());
                 activity.startIntentSenderForResult(intent.getIntentSender(),-1,null,0,0,0,options.toBundle());
             }catch(Exception e){android.widget.Toast.makeText(activity,"无法打开触摸屏管理："+Ipc.error(e),1).show();}
         },error->{if(!activity.isDestroyed())android.widget.Toast.makeText(activity,error,1).show();});
+    }
+    /** Opens the module's own screen profile page: the five-inch dashboard or the 2.4 inch panel, and the HUD default font. */
+    public void screenProfileSettings(Activity activity, boolean dark) {
+        Bundle args = new Bundle(); args.putBoolean("dark", dark);
+        metadataCall(Protocol.SCREEN_PROFILE_SETTINGS, args, result -> {
+            if (activity.isFinishing() || activity.isDestroyed()) return;
+            try {
+                PendingIntent intent = result.getParcelable("screen_intent", PendingIntent.class);
+                if (intent == null) throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
+                ActivityOptions options = backgroundStartMode(ActivityOptions.makeBasic());
+                activity.startIntentSenderForResult(intent.getIntentSender(), -1, null, 0, 0, 0, options.toBundle());
+            } catch (Exception e) { android.widget.Toast.makeText(activity, "无法打开屏幕规格：" + Ipc.error(e), 1).show(); }
+        }, error -> { if (!activity.isDestroyed()) android.widget.Toast.makeText(activity, error, 1).show(); });
     }
     public void notificationSettings(Activity activity, boolean dark) {
         Bundle args = new Bundle(); args.putBoolean("dark", dark);
@@ -919,8 +943,7 @@ public final class FrameClient {
             try {
                 PendingIntent intent = result.getParcelable("settings_intent", PendingIntent.class);
                 if (intent == null) throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
-                ActivityOptions options = ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(Build.VERSION.SDK_INT >= 36
-                        ? ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE : ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+                ActivityOptions options = backgroundStartMode(ActivityOptions.makeBasic());
                 activity.startIntentSenderForResult(intent.getIntentSender(), -1, null, 0, 0, 0, options.toBundle());
             } catch (Exception e) { android.widget.Toast.makeText(activity, "无法打开通知设置：" + Ipc.error(e), 1).show(); }
         }, error -> { if (!activity.isDestroyed()) android.widget.Toast.makeText(activity, error, 1).show(); });
@@ -939,8 +962,7 @@ public final class FrameClient {
             try {
                 PendingIntent intent = result.getParcelable("picker_intent", PendingIntent.class);
                 if (intent == null) throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
-                ActivityOptions options = ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(Build.VERSION.SDK_INT >= 36
-                        ? ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE : ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+                ActivityOptions options = backgroundStartMode(ActivityOptions.makeBasic());
                 activity.startIntentSenderForResult(intent.getIntentSender(), -1, null, 0, 0, 0, options.toBundle());
             } catch (Exception e) { android.widget.Toast.makeText(activity, "无法打开应用列表：" + Ipc.error(e), 1).show(); }
         }, error -> { if (!activity.isDestroyed()) android.widget.Toast.makeText(activity, error, 1).show(); });
@@ -1005,13 +1027,44 @@ public final class FrameClient {
         return frame;
     }
     public void appIcon(String component, android.widget.ImageView target) { appIcons.load(component, target); }
+    /** The screen profile arrives with every settings bundle and status poll; the renderer follows it at once. */
+    private void applyScreenProfile(Bundle config) {
+        if (!config.containsKey(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.MODE)) return;
+        boolean small = config.getInt(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.MODE,
+                dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.FIVE_INCH)
+                == dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.SMALL_240;
+        boolean font = config.getInt(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.FONT, 1) != 0;
+        screenProfileSmall = small;
+        hud.setSmallScreen(small);
+        hud.setFixedTypeface(font ? fixedTypeface() : null);
+        hud.setSmallBackground(config.getInt(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.BG_COLOR, 0xff000000));
+        hud.setSmallColors(config.getInt(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.SPEED_COLOR, 0),
+                config.getInt(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.ROW1_COLOR, 0),
+                config.getInt(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.ROW2_COLOR, 0));
+        hud.setSmallSource(config.getInt(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.SOURCE,
+                dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.SOURCE_VEHICLE));
+    }
+    /** The module's own font, loaded once from the module package so the dashboard text does not follow a phone font. */
+    private Typeface fixedTypeface() {
+        synchronized (this) {
+            if (fixedTypefaceLoaded) return fixedTypeface;
+            if (context == null) return null;
+            fixedTypefaceLoaded = true;
+            try {
+                fixedTypeface = context.getPackageManager().getResourcesForApplication(Protocol.MODULE).getFont(dev.ichinomiya.ninebotenhance.R.font.nb_sans);
+            } catch (Throwable e) { report("FONT default unavailable " + e.getClass().getSimpleName()); }
+            return fixedTypeface;
+        }
+    }
+    /** Whether the current screen profile is the 2.4 inch panel: no launch app is required to start a session. */
+    public boolean screenProfileSmall() { return screenProfileSmall; }
     private void cacheSettings(DisplaySettings value, String selected) {
         savedSettings = value; savedApp = selected;
         try {
             if (context != null) context.getSharedPreferences("dev.ichinomiya.ninebotenhance.cached_display", Context.MODE_PRIVATE).edit()
                     .putInt("width",value.width).putInt("height",value.height).putInt("dpi",value.dpi)
                     .putInt("layout_version",DisplaySettings.LAYOUT_VERSION).putInt("virtual_width",value.virtualWidth).putInt("virtual_height",value.virtualHeight)
-                    .putInt("background_color",value.backgroundColor).putInt("keep_phone_dpi",value.keepPhoneDpi?1:0).putInt("virtual_override",value.virtualOverride?1:0).putInt("light_background_color",value.lightBackgroundColor).putInt("bottom_inset",value.bottomInset).remove("top_inset").remove("top_color")
+                    .putInt("background_color",value.backgroundColor).putInt("keep_phone_dpi",value.keepPhoneDpi?1:0).putInt("compat_scale",value.compatScale?1:0).putInt("virtual_override",value.virtualOverride?1:0).putInt("light_background_color",value.lightBackgroundColor).putInt("bottom_inset",value.bottomInset).remove("top_inset").remove("top_color")
                     .putString(AppCatalog.SELECTED, selected).apply();
         } catch (RuntimeException e) { report("SETTINGS cache write " + Ipc.error(e)); }
     }
@@ -1049,7 +1102,7 @@ public final class FrameClient {
     public void getSettings(Consumer<Bundle> done, Consumer<String> failed) {
         Bundle args = new Bundle(); args.putBoolean("include_apps", true);
         metadataCall(Protocol.SETTINGS, args, result -> {
-            try { cachePrivilege(result); cacheSettings(Ipc.settings(result), result.getString(AppCatalog.SELECTED, "")); done.accept(result); }
+            try { cachePrivilege(result); cacheSettings(Ipc.settings(result), result.getString(AppCatalog.SELECTED, "")); applyScreenProfile(result); done.accept(result); }
             catch (RuntimeException e) { failed.accept(Ipc.error(e)); }
         }, failed);
     }
@@ -1067,7 +1120,7 @@ public final class FrameClient {
         Bundle args = new Bundle(); args.putBoolean("save", true); Ipc.settings(args, value);
         args.putString(AppCatalog.SELECTED, selected);
         metadataCall(Protocol.SETTINGS, args, result -> {
-            try { cacheSettings(Ipc.settings(result), result.getString(AppCatalog.SELECTED, "")); done.accept(null); }
+            try { cacheSettings(Ipc.settings(result), result.getString(AppCatalog.SELECTED, "")); applyScreenProfile(result); done.accept(null); }
             catch (RuntimeException e) { done.accept(Ipc.error(e)); }
         }, done);
     }

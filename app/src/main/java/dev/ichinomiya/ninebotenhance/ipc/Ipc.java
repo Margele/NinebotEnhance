@@ -20,7 +20,7 @@ public final class Ipc {
         data.putInt("width", settings.width); data.putInt("height", settings.height); data.putInt("dpi", settings.dpi);
         data.putInt("layout_version",DisplaySettings.LAYOUT_VERSION);data.putInt("virtual_width",settings.virtualWidth);
         data.putInt("virtual_height",settings.virtualHeight);data.putInt("background_color",settings.backgroundColor);
-        data.putInt("keep_phone_dpi",settings.keepPhoneDpi?1:0);data.putInt("virtual_override",settings.virtualOverride?1:0);data.putInt("light_background_color",settings.lightBackgroundColor);data.putInt("bottom_inset",settings.bottomInset);
+        data.putInt("keep_phone_dpi",settings.keepPhoneDpi?1:0);data.putInt("compat_scale",settings.compatScale?1:0);data.putInt("virtual_override",settings.virtualOverride?1:0);data.putInt("light_background_color",settings.lightBackgroundColor);data.putInt("bottom_inset",settings.bottomInset);
     }
     public static DisplaySettings settings(Bundle data) { return DisplaySettings.read(data::getInt); }
     public static String error(Throwable error) {

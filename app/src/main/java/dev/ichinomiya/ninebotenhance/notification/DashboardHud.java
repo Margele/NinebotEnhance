@@ -73,6 +73,36 @@ public final class DashboardHud {
     private volatile DashboardProfile profile=DashboardProfile.of(848,480);
     private volatile boolean halfScreen;
     public boolean halfScreen(){return halfScreen;}
+    /** The 2.4 inch screen profile: the module's own speed and battery blocks replace every sidebar card. */
+    private volatile boolean smallScreen;
+    /** The 2.4 inch panel is drawn in its own 240 x 320 reference and scaled into whatever frame the panel is given. */
+    private static final float SMALL_PANEL_WIDTH=240,SMALL_PANEL_HEIGHT=320;
+    /** The panel is 320 tall but the layout fills 300 of it, leaving the top strip clear of the speed digits. */
+    private static final float SMALL_LAYOUT_HEIGHT=300;
+    /** Row colours of the small screen: 0 keeps the theme's own text colour. */
+    private int smallSpeedColor,smallRow1Color,smallRow2Color;
+    /** The panel's own backdrop: an opaque colour, or 0 to keep the theme's surface. Black out of the box. */
+    private int smallBackground=0xff000000;
+    /** Where the small screen reads voltage and charge: the vehicle registers or the bound protection board. */
+    private int smallSource;
+    /** The module's bundled font for all module-drawn text; null keeps the system sans-serif. */
+    private Typeface fixedTypeface;
+    public synchronized void setSmallScreen(boolean value){if(smallScreen==value)return;smallScreen=value;timeline.clear();revision++;}
+    public boolean smallScreen(){return smallScreen;}
+    public synchronized void setSmallColors(int speed,int row1,int row2){
+        int a=opaque(speed),b=opaque(row1),c=opaque(row2);
+        if(a==smallSpeedColor&&b==smallRow1Color&&c==smallRow2Color)return;
+        smallSpeedColor=a;smallRow1Color=b;smallRow2Color=c;revision++;
+    }
+    public synchronized void setSmallSource(int value){value=Math.max(0,Math.min(1,value));if(value==smallSource)return;smallSource=value;revision++;}
+    public int smallSource(){return smallSource;}
+    /** The stored colour for a panel row; 0 when the row keeps the theme's own text colour. */
+    public int smallRowColor(int row){return row==0?smallSpeedColor:row==1?smallRow1Color:row==2?smallRow2Color:0;}
+    public synchronized void setSmallBackground(int value){value=opaque(value);if(value==smallBackground)return;smallBackground=value;revision++;}
+    public int smallBackground(){return smallBackground;}
+    /** Only an opaque colour overrides the theme; anything else falls back to it. */
+    private static int opaque(int value){return (value>>>24)==0xff?value:0;}
+    public synchronized void setFixedTypeface(Typeface value){if(value==fixedTypeface)return;fixedTypeface=value;timeline.clear();revision++;}
     public DashboardProfile profile(){return profile;}
     private void adopt(SidebarLayout.Fit fit){profile=fit.profile();if(fit.halfScreen()!=halfScreen){halfScreen=fit.halfScreen();timeline.clear();revision++;}}
     /** Dashboard-painted rectangles in the 848 x 480 reference frame; empty or null falls back to the profile's measured overlays. */
@@ -257,8 +287,12 @@ public final class DashboardHud {
     public synchronized boolean animating(long now){sync(now);return !cards(now).isEmpty()||phoneMotion.animating(now)||musicMotion.animating(now)||voltageMotion.animating(now)||tyreMotion.animating(now)||speedMotion.animating(now)||powerMotion.animating(now)||lampMotion.animating(now)||bmsMotion.animating(now)||volumeAnimating(now);}
     public synchronized String summary(long now){return "notifications="+receiving+" visible="+timeline.entries(now).size()+" phone="+(phone!=null)+" phonePermission="+(phone!=null&&phone.getBoolean("phone_permission"))+" ageMs="+(lastUpdate==0?-1:now-lastUpdate);}
     public synchronized void draw(Canvas canvas,int width,int height,long now){
-        if(!SidebarLayout.fits(width,height))return;SidebarLayout.Fit fit=SidebarLayout.fit(width,height);adopt(fit);int save=canvas.save();
-        try{canvas.clipRect(0,0,width,height);float scale=fit.scale();canvas.translate(fit.dx(),fit.dy());canvas.scale(scale,scale);
+        if(!smallScreen&&!SidebarLayout.fits(width,height))return;
+        SidebarLayout.Fit fit=smallScreen?null:SidebarLayout.fit(width,height);if(fit!=null)adopt(fit);
+        int save=canvas.save();
+        try{canvas.clipRect(0,0,width,height);
+            if(smallScreen){drawSmall(canvas,width,height,now);return;}
+            float scale=fit.scale();canvas.translate(fit.dx(),fit.dy());canvas.scale(scale,scale);
             List<NotificationTimeline.Entry<Card>> cards=cards(now);SidebarLayout.Stack actual=layout(cards,now);
             float dx=hillHold(now)&&actual.notificationDodged()?SidebarLayout.dodgeShift():0,dyN=actual.notificationBottom()-SidebarLayout.BOTTOM;
             drawCard(canvas,bmsMotion,now,box->drawBms(canvas,now,box));
@@ -277,6 +311,85 @@ public final class DashboardHud {
                 float remaining=Math.max(0,(e.expires-now)/(float)(e.expires-e.born));paint.setColor(p.remaining());canvas.drawRect(x+12,y+SidebarLayout.NOTIFICATION_HEIGHT-3,x+12+(w-24)*remaining,y+SidebarLayout.NOTIFICATION_HEIGHT-1,paint);
             }
         }finally{paint.setAlpha(255);canvas.restoreToCount(save);}
+    }
+    /** The 2.4 inch panel: the backdrop fills the frame, the panel itself is laid out at 320 tall and scaled to the frame's height so it never hugs an edge. */
+    private void drawSmall(Canvas c,int width,int height,long now){
+        paint.setStyle(Paint.Style.FILL);paint.setColor(smallBackground==0?p.surface():smallBackground);c.drawRect(0,0,width,height,paint);
+        float scale=height/SMALL_PANEL_HEIGHT;
+        if(scale<=0)return;
+        int save=c.save();
+        try{c.scale(scale,scale);drawPanel(c,width/scale,now);}
+        finally{c.restoreToCount(save);}
+    }
+    /** The panel's own coordinates: the speed block over a divider and up to two rows of two fields. */
+    private void drawPanel(Canvas c,float width,long now){
+        float top=SMALL_PANEL_HEIGHT-SMALL_LAYOUT_HEIGHT,content=SMALL_LAYOUT_HEIGHT;
+        float speedHeight=content*0.56f,batteryHeight=content-speedHeight;
+        String speed=speedExpired(now)?"--":String.valueOf(Math.round(ride.speedKmh()));
+        smallCell(c,width*.5f,top+speedHeight*.44f,width*.94f,speed,"km/h",
+                Math.min(speedHeight*.62f,width*.44f),Math.min(speedHeight*.16f,width*.07f),smallColor(0,p.text()));
+        paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1);paint.setColor(p.border());
+        c.drawLine(0,top+speedHeight+.5f,width,top+speedHeight+.5f,paint);paint.setStyle(Paint.Style.FILL);
+        List<List<Integer>> rows=smallRows();
+        float rowTop=top+speedHeight+batteryHeight*.32f,rowStep=batteryHeight*.40f;
+        for(int i=0;i<rows.size();i++){
+            List<Integer> fields=rows.get(i);if(fields.isEmpty())continue;
+            float size=i==0?Math.min(batteryHeight*.40f,width*.20f):Math.min(batteryHeight*.32f,width*.16f);
+            float unitSize=i==0?Math.min(batteryHeight*.15f,width*.08f):Math.min(batteryHeight*.13f,width*.07f);
+            float centerY=rowTop+i*rowStep;int colour=smallColor(i+1,p.text());
+            if(fields.size()==1){
+                int field=fields.get(0);
+                smallCell(c,width*.5f,centerY,width*.90f,smallValue(field,now),BmsCard.unit(field),size,unitSize,colour);
+                continue;
+            }
+            for(int j=0;j<fields.size();j++){
+                int field=fields.get(j);
+                smallCell(c,width*(j==0?.27f:.73f),centerY,width*.44f,smallValue(field,now),BmsCard.unit(field),size,unitSize,colour);
+            }
+        }
+    }
+    /** The saved card layout clamped to what the panel can hold: two rows of at most two fields each. */
+    private List<List<Integer>> smallRows(){
+        ArrayList<List<Integer>> out=new ArrayList<>();
+        for(List<Integer> row:bmsLayout.visibleRows()){
+            if(out.size()==2)break;
+            out.add(row.size()>2?List.of(row.get(0),row.get(1)):row);
+        }
+        return out;
+    }
+    private int smallColor(int row,int palette){
+        int custom=smallRowColor(row);
+        return custom==0?palette:custom;
+    }
+    /** Voltage and charge follow the chosen source; every other field only exists on the protection board. */
+    private String smallValue(int field,long now){
+        if(field==BmsCard.SOC&&smallSource==0){
+            BatteryTelemetry.Value level=battery.percent();
+            return level==null||expired(level,now)?"--":String.valueOf(Math.round(level.number()));
+        }
+        if(field==BmsCard.VOLTAGE&&smallSource==0){
+            float volts=expired(battery.voltage(),now)?Float.NaN:battery.voltage().number();
+            return Float.isNaN(volts)?"--":String.format(Locale.ROOT,"%.1f",volts);
+        }
+        return BmsCard.value(field,bmsFresh(now)?bms.data():null);
+    }
+    /** One centred cell: the value and its unit share a centre, each on its own baseline, shrunk until both fit. */
+    private void smallCell(Canvas c,float centerX,float centerY,float available,String value,String unit,float size,float unitSize,int colour){
+        float gap=unitSize*.25f;
+        float valueWidth=measure(value,size,true);
+        float total=valueWidth+(unit.isEmpty()?0:gap+measure(unit,unitSize,false));
+        if(total>available&&total>0){
+            float scale=available/total;size*=scale;unitSize*=scale;gap*=scale;
+            valueWidth=measure(value,size,true);
+            total=valueWidth+(unit.isEmpty()?0:gap+measure(unit,unitSize,false));
+        }
+        font(size,true);text.getFontMetrics(textMetrics);
+        float valueBaseline=centerY-(textMetrics.ascent+textMetrics.descent)/2f;
+        font(unitSize,false);text.getFontMetrics(textMetrics);
+        float unitBaseline=centerY-(textMetrics.ascent+textMetrics.descent)/2f;
+        float x=centerX-total/2f;
+        write(c,value,x,valueBaseline,size,colour,true);
+        if(!unit.isEmpty())write(c,unit,x+valueWidth+gap,unitBaseline,unitSize,p.unit(),false);
     }
     private interface CardPainter{void paint(SidebarLayout.Box box);}
     /** Every card is painted at its animated rectangle: translated to its top, clipped to its current size and faded by its alpha. */
@@ -380,7 +493,7 @@ public final class DashboardHud {
     private void drawPower(Canvas c,long now,SidebarLayout.Box box){
         drawMetric(c,now,box,"功率",powerFromBms(now)?String.valueOf(bms.data().watts()):powerExpired(now)?"--":String.valueOf(ride.power()),"W",powerHistory,widgets.enabled(WidgetSettings.POWER_CHART),widgets.powerChartWindowMs(),0,50f);
     }
-    /** Height the hoist reported, or why it is not reporting one; the module never estimates a position locally. */
+    /** Height the device reported (or, for the ESC, was last sent), 已连接 for a timed lift that has none, otherwise 未连接. */
     private void drawLamp(Canvas c,SidebarLayout.Box box){
         float left=box.left(),contentLeft=left+INSET;boolean known=lamp.knownPosition()&&lampPercent>=0;
         surface(c,left,0,box.right()-left,SidebarLayout.LAMP_HEIGHT,11);
@@ -400,7 +513,7 @@ public final class DashboardHud {
     /** The BMS card: its rows from the layout while a fresh reading exists, otherwise one line reading 未连接. */
     private void drawBms(Canvas c,long now,SidebarLayout.Box box){bmsPainter.draw(c,p,box.left(),box.width(),bmsLayout,bms.data(),bmsFresh(now));}
     private float bmsHeight(long now){return bmsPainter.height(bmsLayout,bmsFresh(now));}
-    private String lampText(){return lamp.knownPosition()&&lampPercent>=0?String.valueOf(lampPercent):"未连接";}
+    private String lampText(){return lamp.knownPosition()&&lampPercent>=0?String.valueOf(lampPercent):lamp.ready()?"已连接":"未连接";}
     private float lampWidth(){
         boolean known=lamp.knownPosition()&&lampPercent>=0;String value=lampText();
         return 2*INSET+VALUE_COLUMN+measure(value,known?17:13,known)+(known?4+measure("%",11,false):0);
@@ -480,9 +593,10 @@ public final class DashboardHud {
     private void bar(Canvas c,float x,float y,float width,float height,float fraction){paint.setStyle(Paint.Style.FILL);paint.setColor(p.track());c.drawRoundRect(x,y,x+width,y+height,height/2,height/2,paint);paint.setColor(p.accent());c.drawRoundRect(x,y,x+width*Math.max(0,Math.min(1,fraction)),y+height,height/2,height/2,paint);}
     /** Display-only HUD consumes touches so they cannot reach the application behind it; cards use their settled targets. */
     public synchronized Bundle touch(float x,float y,int width,int height,long now){
+        Bundle hit=new Bundle();hit.putString("command","block");
+        if(smallScreen)return x>=0&&y>=0&&x<width&&y<height?hit:null;
         if(!SidebarLayout.fits(width,height))return null;
         SidebarLayout.Fit fit=SidebarLayout.fit(width,height);adopt(fit);float scale=fit.scale();x=(x-fit.dx())/scale;y=(y-fit.dy())/scale;
-        Bundle hit=new Bundle();hit.putString("command","block");
         List<NotificationTimeline.Entry<Card>> cards=cards(now);SidebarLayout.Stack stack=layout(cards,now);
         float dx=hillHold(now)&&stack.notificationDodged()?SidebarLayout.dodgeShift():0,dyN=stack.notificationBottom()-SidebarLayout.BOTTOM;
         for(NotificationTimeline.Entry<Card> e:cards)if(notificationBox(e,now).contains(x-dx,y-dyN))return hit;
@@ -537,7 +651,12 @@ public final class DashboardHud {
         paint.setColor(p.icon());paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(2);paint.setStrokeCap(Paint.Cap.ROUND);
         c.drawPath(wifiGlyph,paint);paint.setStyle(Paint.Style.FILL);c.drawCircle(12,19,1,paint);c.restoreToCount(save);
     }
-    private void font(float size,boolean bold){text.setTextSize(size);text.setTypeface(bold?Typeface.create("sans-serif",Typeface.BOLD):Typeface.create("sans-serif",Typeface.NORMAL));}
+    private void font(float size,boolean bold){
+        text.setTextSize(size);
+        Typeface face=fixedTypeface;
+        text.setTypeface(face==null?(bold?Typeface.create("sans-serif",Typeface.BOLD):Typeface.create("sans-serif",Typeface.NORMAL))
+                :Typeface.create(face,bold?Typeface.BOLD:Typeface.NORMAL));
+    }
     private String fit(String s,float width,float size,boolean bold){font(size,bold);return TextUtils.ellipsize(s,text,Math.max(0,width),TextUtils.TruncateAt.END).toString();}
     private float measure(String s,float size,boolean bold){font(size,bold);return text.measureText(s);}
     private void write(Canvas c,String s,float x,float y,float size,int color,boolean bold){font(size,bold);text.setColor(color);c.drawText(s,x,y,text);}

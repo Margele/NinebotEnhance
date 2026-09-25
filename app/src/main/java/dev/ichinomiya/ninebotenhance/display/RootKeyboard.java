@@ -24,6 +24,8 @@ public final class RootKeyboard {
     private final String identity;
     private Object clipboard, wm;
     private Method getClip, setClip, clearClip, setIme;
+    /** Android 13's clipboard calls carry no attribution tag or device id. */
+    private boolean clipWide;
     private int previousIme;
     private boolean changedIme, pendingClip, closed;
     private ClipData previousClip;
@@ -70,7 +72,7 @@ public final class RootKeyboard {
         if (keys != null) { for (KeyEvent event : keys) key(event.getKeyCode(), event.getAction(), event.getMetaState()); return; }
         // CJK/emoji cannot be synthesized by the virtual hardware key map. Paste a complete IME
         // commit, then restore the clipboard only while our unique clip is still current.
-        ensureClipboard(); ClipData current = (ClipData)getClip.invoke(clipboard, "com.android.shell", null, 0, 0);
+        ensureClipboard(); ClipData current = readClip();
         if (!ours(current)) {
             pendingClip = false; previousClip = null; pastedText = null;
             if (current != null) for (int i = 0; i < current.getItemCount(); i++) {
@@ -81,7 +83,7 @@ public final class RootKeyboard {
         }
         ClipData clip = ClipData.newPlainText(clipLabel, text); PersistableBundle extras = new PersistableBundle();
         extras.putBoolean("android.content.extra.IS_SENSITIVE", true); clip.getDescription().setExtras(extras);
-        setClip.invoke(clipboard, clip, "com.android.shell", null, 0, 0); pastedText = text; pendingClip = true;
+        writeClip(clip); pastedText = text; pendingClip = true;
         main.removeCallbacks(restoreClip);
         try {
             requireOwned(); press(KeyEvent.KEYCODE_PASTE);
@@ -95,10 +97,30 @@ public final class RootKeyboard {
         IBinder binder = (IBinder)Class.forName("android.os.ServiceManager").getMethod("getService", String.class).invoke(null, "clipboard");
         Class<?> api = Class.forName("android.content.IClipboard");
         Object service = Class.forName("android.content.IClipboard$Stub").getMethod("asInterface", IBinder.class).invoke(null, binder);
-        getClip = api.getMethod("getPrimaryClip", String.class, String.class, int.class, int.class);
-        setClip = api.getMethod("setPrimaryClip", ClipData.class, String.class, String.class, int.class, int.class);
-        clearClip = api.getMethod("clearPrimaryClip", String.class, String.class, int.class, int.class);
+        try {
+            getClip = api.getMethod("getPrimaryClip", String.class, String.class, int.class, int.class);
+            setClip = api.getMethod("setPrimaryClip", ClipData.class, String.class, String.class, int.class, int.class);
+            clearClip = api.getMethod("clearPrimaryClip", String.class, String.class, int.class, int.class);
+            clipWide = true;
+        } catch (NoSuchMethodException e) {
+            getClip = api.getMethod("getPrimaryClip", String.class, int.class);
+            setClip = api.getMethod("setPrimaryClip", ClipData.class, String.class, int.class);
+            clearClip = api.getMethod("clearPrimaryClip", String.class, int.class);
+            clipWide = false;
+        }
         if (service == null) throw new IllegalStateException("文字输入服务不可用"); clipboard = service;
+    }
+    private ClipData readClip() throws Exception {
+        return (ClipData)(clipWide ? getClip.invoke(clipboard, "com.android.shell", null, 0, 0)
+                : getClip.invoke(clipboard, "com.android.shell", 0));
+    }
+    private void writeClip(ClipData clip) throws Exception {
+        if (clipWide) setClip.invoke(clipboard, clip, "com.android.shell", null, 0, 0);
+        else setClip.invoke(clipboard, clip, "com.android.shell", 0);
+    }
+    private void dropClip() throws Exception {
+        if (clipWide) clearClip.invoke(clipboard, "com.android.shell", null, 0, 0);
+        else clearClip.invoke(clipboard, "com.android.shell", 0);
     }
     private boolean ours(ClipData clip) {
         return pendingClip && clip != null && clipLabel.equals(String.valueOf(clip.getDescription().getLabel())) && clip.getItemCount() == 1
@@ -108,10 +130,10 @@ public final class RootKeyboard {
     private synchronized void restoreClipboard() {
         if (!pendingClip) return;
         try {
-            ClipData current = (ClipData)getClip.invoke(clipboard, "com.android.shell", null, 0, 0);
+            ClipData current = readClip();
             if (ours(current)) {
-                if (previousClip == null) clearClip.invoke(clipboard, "com.android.shell", null, 0, 0);
-                else setClip.invoke(clipboard, previousClip, "com.android.shell", null, 0, 0);
+                if (previousClip == null) dropClip();
+                else writeClip(previousClip);
             }
         } catch (Exception e) { log.accept("IME clipboard restore failed"); }
         finally { pendingClip = false; previousClip = null; pastedText = null; }

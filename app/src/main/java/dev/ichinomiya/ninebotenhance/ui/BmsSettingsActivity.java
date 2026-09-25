@@ -3,6 +3,7 @@ package dev.ichinomiya.ninebotenhance.ui;
 import android.Manifest;
 import android.app.*;
 import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
 import android.graphics.Insets;
 import android.os.Bundle;
 import android.text.InputFilter;
@@ -16,11 +17,11 @@ import dev.ichinomiya.ninebotenhance.core.LampSettings;
 import java.util.List;
 import java.util.function.Consumer;
 
-/** Module-owned BMS screen: scan for the DL board, bind it, choose the poll interval; the link runs in the module process. */
+/** Module-owned BMS screen: scan for a board, bind it, choose which protocol it speaks and how often it is polled; the link runs in the module process. */
 public final class BmsSettingsActivity extends Activity {
     private MirrorUi theme;private BmsController bms;
     private EditText mac;private SeekBar poll;private TextView status,permissionStatus,pollValue;private Button grant,scan,save;
-    private Consumer<BmsState> watcher;private boolean saving;
+    private RadioGroup protocols;private Consumer<BmsState> watcher;private boolean saving;
     @Override protected void onCreate(Bundle saved){
         boolean dark=getIntent().getBooleanExtra("dark",true);
         setTheme(dark?android.R.style.Theme_Material_NoActionBar:android.R.style.Theme_Material_Light_NoActionBar);
@@ -47,6 +48,13 @@ public final class BmsSettingsActivity extends Activity {
         LinearLayout.LayoutParams scanParams=new LinearLayout.LayoutParams(MirrorUi.dp(this,92),MirrorUi.dp(this,52));
         scanParams.setMarginStart(gap);addressRow.addView(scan,scanParams);
         LinearLayout.LayoutParams addressParams=new LinearLayout.LayoutParams(-1,-2);addressParams.topMargin=gap;root.addView(addressRow,addressParams);
+        root.addView(caption("协议"));
+        protocols=new RadioGroup(this);protocols.setOrientation(RadioGroup.VERTICAL);
+        for(int id=0;id<BmsSettings.PROTOCOL_NAMES.length;id++){
+            RadioButton choice=radio(BmsSettings.PROTOCOL_NAMES[id]);protocols.addView(choice,new RadioGroup.LayoutParams(-1,-2));
+            if(id==current.protocol())choice.setChecked(true);
+        }
+        root.addView(protocols,new LinearLayout.LayoutParams(-1,-2));
         pollValue=label("",16);
         int step=BmsSettings.POLL_STEP_MS;
         poll=slider("轮询间隔",root,pollValue,BmsSettings.MIN_POLL_MS/step,BmsSettings.MAX_POLL_MS/step,current.pollMs()/step,v->(v%2==0?String.valueOf(v/2):v/2+".5")+" 秒");
@@ -100,7 +108,7 @@ public final class BmsSettingsActivity extends Activity {
         String address=LampSettings.normalizeMac(mac.getText().toString());
         if(address.isEmpty()){status.setText("蓝牙地址无效");return;}
         mac.setText(address);
-        BmsSettings next=new BmsSettings(address,poll.getProgress()*BmsSettings.POLL_STEP_MS);
+        BmsSettings next=new BmsSettings(address,poll.getProgress()*BmsSettings.POLL_STEP_MS,protocols.getCheckedRadioButtonId()<0?BmsSettings.PROTOCOL_AUTO:protocols.indexOfChild(protocols.findViewById(protocols.getCheckedRadioButtonId())));
         bms.save(next);bms.hold(BmsController.HOLD_SCREEN,BmsController.SCREEN_HOLD_MS);
         saving=true;save.setEnabled(false);status.setText("正在连接");
         status.postDelayed(()->{
@@ -120,6 +128,10 @@ public final class BmsSettingsActivity extends Activity {
     private Button button(String text){
         Button view=new Button(this);view.setText(text);view.setAllCaps(false);theme.button(view,null);view.setTextSize(14);
         view.setMaxLines(1);view.setMinimumHeight(MirrorUi.dp(this,52));return view;
+    }
+    private RadioButton radio(String text){
+        RadioButton button=new RadioButton(this);button.setId(View.generateViewId());button.setText(text);button.setTextColor(theme.text);button.setTextSize(15);
+        button.setButtonTintList(ColorStateList.valueOf(theme.accent));button.setPadding(0,MirrorUi.dp(this,6),0,MirrorUi.dp(this,6));return button;
     }
     private EditText field(String value,int inputType,int length){
         int pad=MirrorUi.dp(this,12);

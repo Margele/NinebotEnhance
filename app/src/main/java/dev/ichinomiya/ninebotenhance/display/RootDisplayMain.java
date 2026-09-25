@@ -61,13 +61,15 @@ public final class RootDisplayMain {
     private String recoveryDetail = "", lastRecoveryLog = "";
     private Object taskManager;
     private Method getTasks;
+    /** Android 13's getTasks has no displayId argument; callers then filter the returned window locally. */
+    private boolean taskDisplayFilter;
+    private static final int TASK_SCAN = 64;
     private long lastTaskError;
     /** Route to request again once the app settled on the virtual display; null when nothing was being navigated. */
     private String resumeUri;private int resumePolls;
     private static final long RESUME_POLL_MS=500,RESUME_SETTLE_MS=2500;private static final int RESUME_POLLS=40;
 
-    /** Compat scaling: the display is created at the capture size and render density the client chose; nothing is forced later. */
-    /** Keep-DPI: the display is created at this size and density and the capture path scales it into the app area. */
+    /** Keep-DPI with compat scaling: the display is created at this size and density and the capture path scales it into the app area. Without it applyRenderPlan forces the logical size instead. */
     private int renderDpi, captureWidth, captureHeight; private boolean scaledRender;
     public static void main(String[] args) {
         if (args.length != 1 || !Protocol.validRequest(args[0])) System.exit(2);
@@ -122,15 +124,15 @@ public final class RootDisplayMain {
         renderDpi = config.getInt("render_dpi", 0); captureWidth = config.getInt(Protocol.CAPTURE_WIDTH, 0); captureHeight = config.getInt(Protocol.CAPTURE_HEIGHT, 0);
         scaledRender = false;
         selectedApp = config.getParcelable(AppCatalog.SELECTED, ComponentName.class);
-        if (selectedApp == null) throw new IllegalArgumentException("缺少已选择的启动应用，请回设置选择");
+        if (selectedApp == null) log("APP no launch app selected; nothing to start or watch on the display");
         if (surface == null || !surface.isValid()) throw new IllegalStateException("接收 Surface 已关闭");
         Constructor<DisplayManager> constructor = DisplayManager.class.getDeclaredConstructor(Context.class); constructor.setAccessible(true);
         DisplayManager manager = constructor.newInstance(context);
-        if (settings.keepPhoneDpi) {
-            // Keep-DPI: the display is created at the phone's density and the plan's logical size. The surface the client created
-            // is already plan sized; the display must be created at exactly that size, or the system paints a small display into
-            // the top-left corner of the large buffer. WindowManager's forced size/density is not used: shell often lacks
-            // WRITE_SECURE_SETTINGS and the capture path scales the picture back anyway.
+        if (settings.keepPhoneDpi && settings.compatScale) {
+            // Keep-DPI, compat scaling: the display is created at the phone's density and the plan's logical size. The surface the
+            // client created is already plan sized; the display must be created at exactly that size, or the system paints a small
+            // display into the top-left corner of the large buffer. Without compat scaling the display is created at the buffer size
+            // and applyRenderPlan forces the logical size and density through WindowManager after creation.
             if (renderDpi > 0 && captureWidth > 0 && captureHeight > 0) scaledRender = true;
             else {
                 DisplaySettings.RenderPlan plan = settings.renderPlan(phoneDensityDpi(manager));
@@ -151,8 +153,11 @@ public final class RootDisplayMain {
         catch (ReflectiveOperationException ignored) {}
         VirtualDisplayConfig.Builder builder = new VirtualDisplayConfig.Builder(Protocol.DISPLAY_NAME, scaledRender ? captureWidth : settings.virtualWidth,
                 scaledRender ? captureHeight : settings.virtualHeight, scaledRender ? renderDpi : settings.dpi)
-                .setSurface(surface).setFlags(flags).setRequestedRefreshRate(FramePacer.TARGET_FPS);
-        log("DISPLAY captureTargetFps=" + FramePacer.TARGET_FPS);
+                .setSurface(surface).setFlags(flags);
+        String refreshRate = String.valueOf(FramePacer.TARGET_FPS);
+        try { VirtualDisplayConfig.Builder.class.getMethod("setRequestedRefreshRate", float.class).invoke(builder, FramePacer.TARGET_FPS); }
+        catch (ReflectiveOperationException | RuntimeException e) { refreshRate = "unavailable"; }
+        log("DISPLAY captureTargetFps=" + refreshRate);
         try { VirtualDisplayConfig.Builder.class.getMethod("setHomeSupported", boolean.class).invoke(builder, false); }
         catch (NoSuchMethodException ignored) { /* Older platforms default to no home when system decorations are absent. */ }
         // Locking the display's rotation alone still lets Android letterbox a fixed-portrait
@@ -177,20 +182,36 @@ public final class RootDisplayMain {
         }
         log("APP_LAYOUT policy=" + appLayoutPolicy + " requested=" + requestedAppLayout + " trusted=" + ((flags & (1 << 10)) != 0));
         // The public name/size overload omits requestedRefreshRate. Call the config overload with a null projection.
-        Method create = DisplayManager.class.getMethod("createVirtualDisplay", Class.forName("android.media.projection.MediaProjection"),
-                VirtualDisplayConfig.class, VirtualDisplay.Callback.class, Handler.class);
+        Class<?> projectionType = Class.forName("android.media.projection.MediaProjection");
+        Method create;
+        try {
+            create = DisplayManager.class.getMethod("createVirtualDisplay", projectionType,
+                    VirtualDisplayConfig.class, VirtualDisplay.Callback.class, Handler.class);
+        } catch (NoSuchMethodException e) {
+            // Android 13 only offers the overload that also carries the window context.
+            create = DisplayManager.class.getMethod("createVirtualDisplay", projectionType,
+                    VirtualDisplayConfig.class, VirtualDisplay.Callback.class, Handler.class, android.content.Context.class);
+        }
         VirtualDisplay.Callback callback = new VirtualDisplay.Callback() {
             @Override public void onPaused() { log("DISPLAY power paused id=" + displayId); }
             @Override public void onResumed() { log("DISPLAY power resumed id=" + displayId); }
             @Override public void onStopped() { log("DISPLAY stopped by system id=" + displayId); exit(); }
         };
-        display = (VirtualDisplay)create.invoke(manager, null, displayConfig, callback, main);
+        display = create.getParameterCount() == 4 ? (VirtualDisplay)create.invoke(manager, null, displayConfig, callback, main)
+                : (VirtualDisplay)create.invoke(manager, null, displayConfig, callback, main, null);
         if (display == null || display.getDisplay() == null) throw new IllegalStateException("系统拒绝创建虚拟显示器");
         displayId = display.getDisplay().getDisplayId();
         if (displayId <= 0) throw new IllegalStateException("系统返回了非独立显示器");
         log("DISPLAY created id=" + displayId + " buffer=" + settings.label() + " flags=0x" + Integer.toHexString(flags) + " sharedMemory=" + sharedMemoryStatus);
         if (scaledRender) log("RENDER logical=" + captureWidth + "x" + captureHeight + " dpi=" + renderDpi + " scaled by the capture path into "
                 + settings.virtualWidth + "x" + settings.virtualHeight + " layoutDpi=" + settings.dpi);
+        else try { applyRenderPlan(manager); }
+        catch (Exception e) {
+            // Some ROMs deny WRITE_SECURE_SETTINGS to shell: this session keeps the buffer size and layout density, exactly as with
+            // keep-DPI off, and the module switches compat scaling on for the next one.
+            log("RENDER unavailable, keeping buffer size and layout density: " + Ipc.error(e)); clearRenderPlan();
+            try { providerCall("render_fallback", new Bundle()); } catch (Exception ignored) {}
+        }
         try {
             displayOrientation = new RootDisplayOrientation(display.getDisplay(), this::log);
             displayOrientation.start();
@@ -222,8 +243,10 @@ public final class RootDisplayMain {
         }
         Bundle ready = new Bundle(); ready.putBinder("root", endpoint); ready.putInt("displayId", displayId);
         ready.putString(Protocol.APP_LAYOUT_POLICY, appLayoutPolicy); providerCall("ready", ready);
-        launch(selectedApp);
-        appRecovery.started(SystemClock.elapsedRealtime()); main.post(appWatch);
+        if (selectedApp == null) log("DISPLAY content left to the module; no launch app to start or watch");
+        else {
+            launch(selectedApp); appRecovery.started(SystemClock.elapsedRealtime()); main.post(appWatch);
+        }
         System.out.println("VD ready id=" + displayId + " " + settings.label());
     }
     private final Binder endpoint = new Binder() {
@@ -396,14 +419,22 @@ public final class RootDisplayMain {
     }
     private java.util.List<?> displayTasks() throws Exception {
         if (displayId <= 0 || display == null || !display.getDisplay().isValid()) throw new IllegalStateException("虚拟屏已关闭");
-        if (getTasks == null) {
-            taskManager = Class.forName("android.app.ActivityTaskManager").getMethod("getService").invoke(null);
-            getTasks = Class.forName("android.app.IActivityTaskManager").getMethod("getTasks", int.class, boolean.class, boolean.class, int.class);
-        }
-        // Ask only about this display. We never enumerate, close or change unrelated tasks on the phone.
-        Object result = getTasks.invoke(taskManager, 16, false, false, displayId);
+        Method api = taskMethod();
+        // Ask only about this display. We never enumerate, close or change unrelated tasks on the phone;
+        // where the platform cannot scope the query, both callers keep only their own displayId entries.
+        Object result = taskDisplayFilter ? api.invoke(taskManager, 16, false, false, displayId)
+                : api.invoke(taskManager, TASK_SCAN, false, false);
         if (!(result instanceof java.util.List<?>)) throw new IllegalStateException("副屏任务状态不可用");
         return (java.util.List<?>)result;
+    }
+    private Method taskMethod() throws Exception {
+        if (getTasks == null) {
+            taskManager = Class.forName("android.app.ActivityTaskManager").getMethod("getService").invoke(null);
+            Class<?> api = Class.forName("android.app.IActivityTaskManager");
+            try { getTasks = api.getMethod("getTasks", int.class, boolean.class, boolean.class, int.class); taskDisplayFilter = true; }
+            catch (NoSuchMethodException e) { getTasks = api.getMethod("getTasks", int.class, boolean.class, boolean.class); taskDisplayFilter = false; }
+        }
+        return getTasks;
     }
     private boolean displayOccupied() throws Exception {
         for (Object task : displayTasks()) {
@@ -448,6 +479,7 @@ public final class RootDisplayMain {
     }
     private void restartSelectedApp() {
         try {
+            if (selectedApp == null) return;
             // Recheck immediately: the app may have returned since the user saw the prompt.
             if (displayOccupied()) { appRecovery.sample(SystemClock.elapsedRealtime(), true); recoveryDetail = ""; return; }
             if (!appRecovery.restart(SystemClock.elapsedRealtime())) return;
@@ -465,11 +497,9 @@ public final class RootDisplayMain {
             android.util.DisplayMetrics metrics = new android.util.DisplayMetrics(); target.getRealMetrics(metrics);
             log("DISPLAY id=" + displayId + " logical=" + size.x + "x" + size.y + " rotation=" + target.getRotation()
                     + " dpi=" + metrics.densityDpi + " buffer=" + settings.virtualWidth + "x" + settings.virtualHeight);
-            Class<?> atm = Class.forName("android.app.ActivityTaskManager");
-            Object service = atm.getMethod("getService").invoke(null);
-            Object tasks = Class.forName("android.app.IActivityTaskManager")
-                    .getMethod("getTasks", int.class, boolean.class, boolean.class, int.class)
-                    .invoke(service, 1, false, false, displayId);
+            Method api = taskMethod();
+            Object tasks = taskDisplayFilter ? api.invoke(taskManager, 1, false, false, displayId)
+                    : api.invoke(taskManager, TASK_SCAN, false, false);
             for (Object task : (java.util.List<?>)tasks) {
                 // The system-side query and this check both restrict diagnostics to our own display.
                 if (task.getClass().getField("displayId").getInt(task) != displayId) continue;
@@ -517,6 +547,46 @@ public final class RootDisplayMain {
         if (surface != null) { surface.release(); surface = null; }
         try { Class.forName("android.app.IActivityManager").getMethod("removeContentProviderExternal", String.class, IBinder.class)
                 .invoke(activityManager, Protocol.ROOT_AUTHORITY, providerToken); } catch (Exception ignored) {}
+    }
+    /**
+     * Keep-DPI without compat scaling: the display renders at the phone's density with a proportionally larger logical size, so a
+     * navigation app moving between the phone and this display never sees a density change. WindowManager's forced size and density
+     * change the logical display only; the physical size stays the RGBA buffer and DisplayManager's letterbox projection scales the
+     * content back into it at no cost to the module. WindowManager creates its DisplayContent from the display-added event after
+     * createVirtualDisplay returns, so the override is retried until the display reports it. Needs WRITE_SECURE_SETTINGS: root has
+     * it, shell not on every ROM.
+     */
+    private void applyRenderPlan(DisplayManager manager) throws Exception {
+        if (!settings.keepPhoneDpi) return;
+        int phoneDpi = phoneDensityDpi(manager);
+        DisplaySettings.RenderPlan plan = settings.renderPlan(phoneDpi);
+        if (plan == null) { log("RENDER phoneDpi=" + phoneDpi + " needs no override"); return; }
+        Object windowManager = Class.forName("android.view.WindowManagerGlobal").getMethod("getWindowManagerService").invoke(null);
+        Class<?> api = Class.forName("android.view.IWindowManager");
+        Method size = api.getMethod("setForcedDisplaySize", int.class, int.class, int.class);
+        Method density = api.getMethod("setForcedDisplayDensityForUser", int.class, int.class, int.class);
+        int user = moduleUid / 100000;
+        long deadline = SystemClock.elapsedRealtime() + 3000; Point actual = new Point(); android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
+        while (true) {
+            size.invoke(windowManager, displayId, plan.width(), plan.height()); density.invoke(windowManager, displayId, plan.dpi(), user);
+            Display target = display.getDisplay(); target.getRealSize(actual); target.getRealMetrics(metrics);
+            if (actual.x == plan.width() && actual.y == plan.height() && metrics.densityDpi == plan.dpi()) break;
+            if (SystemClock.elapsedRealtime() > deadline)
+                throw new IllegalStateException("系统未接受保持 DPI 的渲染尺寸：" + actual.x + "x" + actual.y + "@" + metrics.densityDpi
+                        + "，需要 " + plan.width() + "x" + plan.height() + "@" + plan.dpi());
+            Thread.sleep(100);
+        }
+        log("RENDER forced logical=" + plan.width() + "x" + plan.height() + " dpi=" + plan.dpi() + " buffer=" + settings.virtualWidth + "x" + settings.virtualHeight
+                + " layoutDpi=" + settings.dpi + " phoneDpi=" + phoneDpi);
+    }
+    /** Undo a partially applied render plan so the display is left at its buffer size; failures here are already reported. */
+    private void clearRenderPlan() {
+        try {
+            Object windowManager = Class.forName("android.view.WindowManagerGlobal").getMethod("getWindowManagerService").invoke(null);
+            Class<?> api = Class.forName("android.view.IWindowManager");
+            try { api.getMethod("clearForcedDisplaySize", int.class).invoke(windowManager, displayId); } catch (Exception ignored) {}
+            try { api.getMethod("clearForcedDisplayDensityForUser", int.class, int.class).invoke(windowManager, displayId, moduleUid / 100000); } catch (Exception ignored) {}
+        } catch (Exception ignored) {}
     }
     private static int phoneDensityDpi(DisplayManager manager) {
         Display phone = manager.getDisplay(Display.DEFAULT_DISPLAY);

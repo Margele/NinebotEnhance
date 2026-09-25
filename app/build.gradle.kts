@@ -8,7 +8,7 @@ android {
     buildToolsVersion = "37.0.0"
     defaultConfig {
         applicationId = "dev.ichinomiya.ninebotenhance"
-        minSdk = 34
+        minSdk = 33
         targetSdk = 36
         versionCode = releaseVersion.getProperty("versionCode").toInt()
         versionName = releaseVersion.getProperty("versionName")

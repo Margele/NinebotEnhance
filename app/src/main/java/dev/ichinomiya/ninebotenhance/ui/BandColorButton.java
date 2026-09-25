@@ -15,11 +15,14 @@ import dev.ichinomiya.ninebotenhance.core.DisplaySettings;
 final class BandColorButton extends Button {
     private final Activity activity;
     private final MirrorUi theme;
+    private final String title;
     private int color;
     private AlertDialog popup;
 
-    BandColorButton(Activity activity, MirrorUi theme, int color) {
-        super(activity); this.activity = activity; this.theme = theme;
+    BandColorButton(Activity activity, MirrorUi theme, int color) { this(activity, theme, color, "背景颜色"); }
+
+    BandColorButton(Activity activity, MirrorUi theme, int color, String title) {
+        super(activity); this.activity = activity; this.theme = theme; this.title = title;
         theme.button(this, null); setTextSize(12); setSingleLine(true);
         setForceDarkAllowed(false);
         setPadding(dp(4), dp(12), dp(4), dp(12)); setMinimumHeight(dp(52));
@@ -28,7 +31,7 @@ final class BandColorButton extends Button {
     int color() { return color; }
     void setBandColor(int value) {
         BandColor.requireOpaque(value); color = value;
-        sample(this,color);setContentDescription("背景颜色 "+BandColor.hex(color)+"，点击修改");
+        sample(this,color);setContentDescription(title+" "+BandColor.hex(color)+"，点击修改");
     }
     private void sample(TextView view, int value) {
         view.setText(BandColor.hex(value));
@@ -41,8 +44,8 @@ final class BandColorButton extends Button {
         content.setPadding(dp(20), dp(20), dp(20), dp(20));
         content.setBackground(theme.background(activity, theme.surface, 24, false)); content.setClipToOutline(true);
         content.setForceDarkAllowed(false);
-        TextView title = new TextView(activity); title.setText("背景颜色"); title.setTextColor(theme.text); title.setTextSize(20);
-        title.setPadding(0, 0, 0, dp(16)); content.addView(title);
+        TextView heading = new TextView(activity); heading.setText(title); heading.setTextColor(theme.text); heading.setTextSize(20);
+        heading.setPadding(0, 0, 0, dp(16)); content.addView(heading);
         LinearLayout body = new LinearLayout(activity); body.setOrientation(LinearLayout.VERTICAL);
         ScrollView scroll = new ScrollView(activity); scroll.addView(body); content.addView(scroll, new LinearLayout.LayoutParams(-1, -2, 1));
         EditText input = new EditText(activity); input.setSingleLine(true);

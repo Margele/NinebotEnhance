@@ -36,7 +36,7 @@ def main():
     jar=work/'smoke.jar'
     with zipfile.ZipFile(jar,'w') as out:
         for path in classes.rglob('*.class'):out.write(path,path.relative_to(classes).as_posix())
-    run([java,'-cp',bt/'lib/d8.jar','com.android.tools.r8.D8','--release','--min-api','34','--lib',android,'--classpath',program,'--output',dex,jar])
+    run([java,'-cp',bt/'lib/d8.jar','com.android.tools.r8.D8','--release','--min-api','33','--lib',android,'--classpath',program,'--output',dex,jar])
     run(adb+['shell','mkdir','-p',remote])
     try:
         run(adb+['push',apk,remote+'/module.apk']);run(adb+['push',dex/'classes.dex',remote+'/test.dex'])

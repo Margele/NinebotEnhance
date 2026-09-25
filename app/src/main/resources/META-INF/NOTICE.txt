@@ -16,6 +16,15 @@ Upstream license declarations were checked on 2026-09-13. A reference to an exte
 - License source: https://github.com/RikkaApps/Shizuku-API/blob/master/LICENSE; the published 13.1.5 POM also declares MIT: https://repo.maven.apache.org/maven2/dev/rikka/shizuku/api/13.1.5/api-13.1.5.pom
 - The official API, Sui initialization and provider classes are bundled. The Shizuku server, manager application and Sui module are not bundled.
 
+## Bundled resources
+
+**Liberation Sans** — Digitized data copyright (c) 2010 Google Corporation with Reserved Font Arimo; Copyright (c) 2012 Red Hat, Inc. with Reserved Font Name Liberation.
+
+- File: `app/src/main/res/font/nb_sans.ttf`, packaged in the APK as `res/font/nb_sans.ttf`.
+- Purpose: the module's own dashboard text when the default-font switch is on, so the readout does not follow a phone font.
+- License: SIL Open Font License 1.1; full notice and license in `LiberationSans-OFL-1.1.txt`.
+- Upstream: https://github.com/liberationfonts/liberation-fonts
+
 ## Adapted display implementation
 
 The bootstrap, minimal ActivityThread context, display creation, activity launch and input injection in `display/RootDisplayMain.java` adapt the approach and relevant wrapper/workaround code from these Apache-2.0 projects. Local changes replace their video/network transport with authenticated Binder Surface handles, use shell identity before runtime startup, and bind display lifetime to the Ninebot session.

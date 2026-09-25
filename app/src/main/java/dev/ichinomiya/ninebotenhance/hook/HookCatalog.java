@@ -31,9 +31,9 @@ public final class HookCatalog {
     public static Target resource(String kind,String name,String purpose){return new Target(kind,"",name,null,purpose);}
     /**
      * Builds whose targets were verified individually; any other build keeps the frame replacement disabled. 6.10.11 ships the
-     * business dex unpacked and its class set, member signatures, dependent layouts and ids are identical to 6.10.10.
+     * business dex unpacked and its class set, member signatures, dependent layouts and ids are identical to 6.10.10. 6.10.12 ships the business dex under NetEase reinforcement, so its cn.ninebot.* class and member targets are confirmed only at runtime by verify(); its resources, layouts and ids match 6.10.11.
      */
-    public static final Map<String,Long> VERSIONS=Map.of("6.10.10",610104038L,"6.10.11",610114116L);
+    public static final Map<String,Long> VERSIONS=Map.of("6.10.10",610104038L,"6.10.11",610114116L,"6.10.12",610124146L);
     public static boolean compatible(String versionName,long versionCode){
         if(versionName==null)return false;Long code=VERSIONS.get(versionName);return code!=null&&code==versionCode;
     }

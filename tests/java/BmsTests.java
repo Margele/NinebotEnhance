@@ -71,12 +71,135 @@ final class BmsTests {
         WidgetSettings shown=WidgetSettings.DEFAULT.with(WidgetSettings.BMS,true);
         SidebarLayout.Stack stack=SidebarLayout.arrange(shown,WidgetSettings.BMS,0,new SidebarLayout.Sizes(100,190,100,190,190,190,120,190,2*BmsCard.ROW_HEIGHT),false);
         CoreTests.check(stack.bms()!=null&&stack.bms().bottom()==SidebarLayout.BOTTOM&&stack.bms().height()==2*BmsCard.ROW_HEIGHT&&stack.bms().width()==190&&stack.of(WidgetSettings.BMS)==stack.bms(),"the BMS card takes the height its rows need");
+        boards();
     }
+    /** The four plain protocols: the read command each board asks for, and one whole status frame taken apart. */
+    private static void boards(){
+        BmsProtocol ant=BmsProtocols.create(BmsSettings.PROTOCOL_ANT),jbd=BmsProtocols.create(BmsSettings.PROTOCOL_JBD),
+                jk=BmsProtocols.create(BmsSettings.PROTOCOL_JK),yy=BmsProtocols.create(BmsSettings.PROTOCOL_YY);
+        CoreTests.check(Arrays.equals(ant.begin(0)[0],bytes(0x7E,0xA1,0x01,0x00,0x00,0xBE,0x18,0x55,0xAA,0x55))
+                &&Arrays.equals(jbd.begin(0)[0],bytes(0xDD,0xA5,0x03,0x00,0xFF,0xFD,0x77))
+                &&Arrays.equals(jbd.followUp(0,0),bytes(0xDD,0xA5,0x04,0x00,0xFF,0xFC,0x77))
+                &&Arrays.equals(yy.begin(0)[0],bytes(0x01,0x03,0x00,0x4B,0x00,0x5C,0x35,0xE5)),
+                "every board is asked for its status with its own published command bytes");
+        byte[] jkInfo=jk.begin(0)[0],jkStream=jk.poll(0,0)[0];
+        CoreTests.check(jkInfo.length==20&&jkInfo[4]==(byte)0x97&&jkStream[4]==(byte)0x96&&jkInfo[19]==0x11&&jkStream[19]==0x10
+                &&jk.poll(9000,9000).length==0&&Arrays.equals(jk.followUp(0,0),jkStream),"JK opens with the device info frame, then the stream, and stops once it is pushing");
+        BmsData a=ant.accept(antStatus(1000),1000);
+        CoreTests.check(a!=null&&a.cells()==16&&near(a.volts(),52.84f)&&near(a.amps(),0.3f)&&!a.charging()&&a.soc()==91
+                &&near(a.capacityAh(),280.0f)&&Math.abs(a.remainingAh()-252.602325f)<1e-3&&a.temps()[0]==1&&a.temps()[1]==2
+                &&a.cellMv()[0]==3300&&a.watts()==16&&a.mos()==3,"the ANT status frame reads as one whole pack: "+a.describe());
+        CoreTests.check(ant.accept(garbage(37,0x7E),1100)==null&&ant.accept(antStatus(1200),1200)!=null,"an ANT frame behind junk still resynchronises");
+        byte[] broken=antStatus(1300);broken[40]^=1;
+        CoreTests.check(ant.accept(broken,1300)==null,"an ANT frame with a wrong checksum is dropped");
+        byte[] basic=jbdBasic(1400);
+        CoreTests.check(jbd.accept(Arrays.copyOf(basic,12),1400)==null,"a JBD frame in pieces waits for the rest");
+        BmsData j=jbd.accept(Arrays.copyOfRange(basic,12,basic.length),1410);
+        CoreTests.check(j!=null&&near(j.volts(),52.84f)&&near(j.amps(),0.3f)&&j.soc()==55&&j.cycles()==42&&near(j.capacityAh(),200.0f)
+                &&near(j.remainingAh(),100.0f)&&j.cells()==8&&j.temps()[0]==25&&j.temps()[1]==30&&j.mos()==3,"the JBD basic frame parses: "+j.describe());
+        BmsData cells=jbd.accept(jbdCells(1420),1420);
+        CoreTests.check(cells!=null&&cells.cellMv().length==8&&cells.maxCellMv()==4100&&cells.minCellMv()==4100&&cells.diffMv()==0
+                &&near(cells.volts(),52.84f)&&cells.soc()==55,"the JBD cell frame fills the voltages into the reading already held");
+        byte[] badJbd=basic.clone();badJbd[badJbd.length-1]^=1;
+        CoreTests.check(jbd.accept(badJbd,1430)==null,"a JBD frame with a wrong checksum is dropped");
+        BmsData k=jk.accept(jkStatus(1500),1500);
+        CoreTests.check(k!=null&&k.cells()==24&&near(k.volts(),79.2f)&&near(k.amps(),1.5f)&&!k.charging()&&k.soc()==77&&k.cycles()==12
+                &&near(k.capacityAh(),100.0f)&&near(k.remainingAh(),50.0f)&&k.mos()==3&&k.temps()[0]==25&&k.cellMv().length==24,"the JK status frame reads in the 24-slot layout: "+k.describe());
+        byte[] badJk=jkStatus(1600);badJk[299]^=1;
+        CoreTests.check(jk.accept(badJk,1600)==null&&jk.accept(jkStatus(1700),1700)!=null,"a JK frame with a wrong sum is dropped and the next one still parses");
+        BmsData y=yy.accept(yyStatus(1800),1800);
+        CoreTests.check(y!=null&&y.cells()==16&&near(y.volts(),52.84f)&&near(y.amps(),-3.0f)&&y.charging()&&y.soc()==88&&near(y.capacityAh(),280.0f)
+                &&near(y.remainingAh(),200.0f)&&y.temps()[0]==25&&y.temps()[1]==30&&y.cellMv()[0]==3300&&y.mos()==3&&y.watts()==-159,"the 彦阳 frame reads through the Modbus response: "+y.describe());
+        byte[] badYy=yyStatus(1900);badYy[100]^=1;
+        CoreTests.check(yy.accept(badYy,1900)==null&&yy.accept(yyStatus(2000),2000)!=null,"a 彦阳 frame with a wrong CRC is dropped and the stream recovers");
+        CoreTests.check(BmsProtocols.name("DL-BMS")==BmsSettings.PROTOCOL_DL&&BmsProtocols.name("ANT@24S") ==BmsSettings.PROTOCOL_ANT
+                &&BmsProtocols.name("JBD-24S")==BmsSettings.PROTOCOL_JBD&&BmsProtocols.name("jk02_32S")==BmsSettings.PROTOCOL_JK
+                &&BmsProtocols.name("HLK-B40")==BmsSettings.PROTOCOL_YY&&BmsProtocols.name("随机设备")==BmsSettings.PROTOCOL_AUTO,
+                "the advertised name picks the protocol");
+        CoreTests.check(BmsProtocols.services(List.of("0000ff00-0000-1000-8000-00805f9b34fb"))==BmsSettings.PROTOCOL_JBD
+                &&BmsProtocols.services(List.of("6e400001-b5a3-f393-e0a9-e50e24dcca9e"))==BmsSettings.PROTOCOL_YY
+                &&BmsProtocols.services(List.of("0000ffe0-0000-1000-8000-00805f9b34fb","0000ffe2-0000-1000-8000-00805f9b34fb"))==BmsSettings.PROTOCOL_DL
+                &&BmsProtocols.services(List.of())==BmsSettings.PROTOCOL_AUTO&&BmsProtocols.create(BmsSettings.PROTOCOL_DL)==null,
+                "the exposed services settle the protocol when the name says nothing");
+        BmsSettings forced=new BmsSettings("b4:f5:f6:77:77:0b",2750,BmsSettings.PROTOCOL_JK);
+        CoreTests.check(forced.protocol()==BmsSettings.PROTOCOL_JK&&new BmsSettings("b4:f5:f6:77:77:0b",2750,99).protocol()==BmsSettings.PROTOCOL_AUTO
+                &&forced.withProtocol(BmsSettings.PROTOCOL_ANT).protocol()==BmsSettings.PROTOCOL_ANT
+                &&BmsSettings.protocolName(BmsSettings.PROTOCOL_YY).equals("彦阳")&&BmsSettings.NONE.protocol()==BmsSettings.PROTOCOL_AUTO,
+                "the chosen protocol is stored, clamped and named");
+    }
+    /** A 152-byte ANT status answer for a sixteen cell, two sensor pack. */
+    private static byte[] antStatus(long at){
+        int cells=16,sensors=2,dyn=2*cells+2*sensors,total=116+dyn;
+        byte[] f=new byte[total];
+        f[0]=0x7E;f[1]=(byte)0xA1;f[2]=0x11;f[5]=(byte)(106+dyn);f[7]=3;f[8]=(byte)sensors;f[9]=(byte)cells;
+        for(int i=0;i<cells;i++)put16(f,34+2*i,3300);
+        put16(f,34+2*cells,1);put16(f,34+2*cells+2,2);
+        put16(f,34+dyn,2);put16(f,36+dyn,7);
+        put16(f,38+dyn,5284);put16(f,40+dyn,3);put16(f,42+dyn,91);put16(f,44+dyn,100);
+        f[46+dyn]=1;f[47+dyn]=1;
+        put32(f,50+dyn,280000000L);put32(f,54+dyn,252602325L);put32(f,58+dyn,4862138L);
+        put16(f,74+dyn,3300);put16(f,78+dyn,3300);put16(f,82+dyn,0);put16(f,84+dyn,3300);
+        put16(f,94+dyn,0xFAF2);
+        int crc=crc16(f,1,5+(106+dyn));put16(f,112+dyn,crc);f[114+dyn]=(byte)0xAA;f[115+dyn]=0x55;
+        return f;
+    }
+    /** A JBD basic answer: the twenty-three byte payload, its big-endian running sum and the 0x77 tail. */
+    private static byte[] jbdBasic(long at){
+        byte[] f=new byte[34];f[0]=(byte)0xDD;f[1]=0x03;f[3]=27;
+        put16be(f,4,5284);put16be(f,6,-30);put16be(f,8,10000);put16be(f,10,20000);put16be(f,12,42);
+        put16be(f,16,0);put16be(f,18,0);put16be(f,20,0x10);f[23]=55;f[24]=3;f[25]=8;f[26]=2;
+        put16be(f,27,2981);put16be(f,29,3031);
+        int sum=0;for(int i=2;i<=f.length-4;i++)sum=(sum+(f[i]&0xff))&0xffff;
+        put16be(f,31,-sum);f[33]=0x77;
+        return f;
+    }
+    private static byte[] jbdCells(long at){
+        byte[] f=new byte[7+16];f[0]=(byte)0xDD;f[1]=0x04;f[3]=16;
+        for(int i=0;i<8;i++)put16be(f,4+2*i,4100);
+        int sum=0;for(int i=2;i<=f.length-4;i++)sum=(sum+(f[i]&0xff))&0xffff;
+        put16be(f,f.length-3,-sum);f[f.length-1]=0x77;
+        return f;
+    }
+    /** A JK status answer in the twenty-four slot layout. */
+    private static byte[] jkStatus(long at){
+        byte[] f=new byte[300];f[0]=0x55;f[1]=(byte)0xAA;f[2]=(byte)0xEB;f[3]=(byte)0x90;f[4]=0x02;
+        for(int i=0;i<24;i++)put16(f,6+2*i,3300);
+        put32(f,118,79200L);put32(f,126,-1500L);put16(f,130,250);put16(f,132,251);
+        put16(f,140,0);f[141]=77;put32(f,142,50000L);put32(f,146,100000L);put32(f,150,12L);put32(f,154,250000L);
+        f[158]=99;f[166]=1;f[167]=1;
+        put16(f,222,(short)-1000);put16(f,224,(short)-1000);put16(f,226,(short)-1000);
+        int sum=0;for(int i=0;i<299;i++)sum+=f[i]&0xff;f[299]=(byte)sum;
+        return f;
+    }
+    /** A 彦阳 Modbus answer carrying the ninety-two holding registers. */
+    private static byte[] yyStatus(long at){
+        byte[] f=new byte[189];f[0]=1;f[1]=3;f[2]=(byte)184;
+        f[3]=16;f[4]=1;
+        put32(f,5,52840L);put32(f,9,-300L);
+        for(int i=0;i<16;i++)put16(f,15+2*i,3300);
+        f[3+74]=65;f[3+75]=65;f[3+76]=70;f[3+77]=65;
+        put16(f,3+86,2800);put16(f,3+88,2000);f[3+90]=88;f[3+91]=100;
+        put32(f,3+128,0);put32(f,3+154,0);
+        int crc=crc16(f,0,187);put16(f,187,crc);
+        return f;
+    }
+    private static byte[] garbage(int length,int first){
+        byte[] junk=new byte[length];junk[0]=(byte)first;for(int i=1;i<length;i++)junk[i]=(byte)(0x11*i);
+        return junk;
+    }
+    private static boolean near(float actual,float expected){return Math.abs(actual-expected)<1e-4f;}
+    private static int crc16(byte[] data,int offset,int length){
+        int crc=0xffff;
+        for(int i=offset;i<offset+length;i++){crc^=data[i]&0xff;for(int bit=0;bit<8;bit++)crc=(crc&1)!=0?(crc>>>1)^0xa001:crc>>>1;}
+        return crc&0xffff;
+    }
+    private static void put16be(byte[] b,int i,int v){b[i]=(byte)(v>>8);b[i+1]=(byte)v;}
     private static byte[] answer(int fc,int serial,byte[] content){
         byte[] f=new byte[13+content.length+2];f[0]=0x5a;f[1]=(byte)0xa5;f[2]=0;f[3]=0x40;f[4]=(byte)fc;f[5]=(byte)serial;f[6]=(byte)(serial>>8);f[7]=1;f[9]=1;f[11]=(byte)content.length;f[12]=(byte)(content.length>>8);
         System.arraycopy(content,0,f,13,content.length);int sum=DlBmsProtocol.checksum(f,f.length-2);f[f.length-2]=(byte)sum;f[f.length-1]=(byte)(sum>>8);return f;
     }
     private static void put16(byte[] b,int i,int v){b[i]=(byte)v;b[i+1]=(byte)(v>>8);}
+    private static void put16(byte[] b,int i,short v){b[i]=(byte)v;b[i+1]=(byte)(v>>8);}
     private static void put32(byte[] b,int i,long v){b[i]=(byte)v;b[i+1]=(byte)(v>>8);b[i+2]=(byte)(v>>16);b[i+3]=(byte)(v>>24);}
     private static String hex(byte[] data){StringBuilder b=new StringBuilder();for(byte v:data)b.append(String.format(java.util.Locale.ROOT,"%02X ",v));return b.toString().trim();}
 }

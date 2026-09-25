@@ -32,9 +32,14 @@ public final class RootDisplayOrientation {
         catch (NoSuchMethodException e) { thaw = api.getMethod("thawDisplayRotation", int.class); }
         fixed = api.getMethod("setFixedToUserRotation", int.class, int.class);
         ignore = api.getMethod("setIgnoreOrientationRequest", int.class, boolean.class);
-        previousRotation = (int)api.getMethod("getDisplayUserRotation", int.class).invoke(windowManager, id);
+        Method userRotation = null, ignoreRequest = null;
+        try { userRotation = api.getMethod("getDisplayUserRotation", int.class); }
+        catch (NoSuchMethodException e) { /* Android 13 and 14 expose no per-display user rotation; the session starts on the panel's natural rotation. */ }
+        previousRotation = userRotation == null ? display.getRotation() : (int)userRotation.invoke(windowManager, id);
         previousFrozen = (boolean)api.getMethod("isDisplayRotationFrozen", int.class).invoke(windowManager, id);
-        previousIgnore = (boolean)api.getMethod("getIgnoreOrientationRequest", int.class).invoke(windowManager, id);
+        try { ignoreRequest = api.getMethod("getIgnoreOrientationRequest", int.class); }
+        catch (NoSuchMethodException e) { /* Same platforms have only the setter; a fresh session display is left at the platform default on restore. */ }
+        previousIgnore = ignoreRequest != null && (boolean)ignoreRequest.invoke(windowManager, id);
         if (previousRotation < 0 || previousRotation > 3) throw new IllegalStateException("副屏旋转状态不可用");
         apply();
     }

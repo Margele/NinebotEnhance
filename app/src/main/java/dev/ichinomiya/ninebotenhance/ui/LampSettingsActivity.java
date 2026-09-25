@@ -3,12 +3,14 @@ package dev.ichinomiya.ninebotenhance.ui;
 import android.Manifest;
 import android.app.*;
 import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
 import android.graphics.Insets;
 import android.os.Bundle;
 import android.text.InputFilter;
 import android.text.InputType;
 import android.view.*;
 import android.widget.*;
+import dev.ichinomiya.ninebotenhance.core.LampKind;
 import dev.ichinomiya.ninebotenhance.core.LampSettings;
 import dev.ichinomiya.ninebotenhance.core.LampState;
 import dev.ichinomiya.ninebotenhance.core.TxLampProtocol;
@@ -23,8 +25,9 @@ import java.util.function.Consumer;
  */
 public final class LampSettingsActivity extends Activity {
     private MirrorUi theme;private LampController lamp;
-    private EditText mac,password;private SeekBar steps;private Switch volumeControl,reversed;
-    private TextView status,permissionStatus,stepsValue;private Button grant,scan,save;
+    private EditText mac,password;private SeekBar steps,jog;private Switch volumeControl,reversed;private RadioGroup kinds;
+    private TextView status,permissionStatus,stepsValue,jogValue;private Button grant,scan,save;
+    private LinearLayout passwordBlock,stepsBlock,jogBlock;
     private Consumer<LampState> watcher;private boolean saving;
     @Override protected void onCreate(Bundle saved){
         boolean dark=getIntent().getBooleanExtra("dark",true);
@@ -51,11 +54,23 @@ public final class LampSettingsActivity extends Activity {
         scan=button("扫描");scan.setOnClickListener(v->startScan());
         LinearLayout.LayoutParams scanParams=new LinearLayout.LayoutParams(MirrorUi.dp(this,92),MirrorUi.dp(this,52));
         scanParams.setMarginStart(gap);addressRow.addView(scan,scanParams);
+        root.addView(caption("类型"));
+        kinds=new RadioGroup(this);kinds.setOrientation(RadioGroup.HORIZONTAL);
+        for(LampKind kind:LampKind.values()){
+            RadioButton choice=radio(kind.label);kinds.addView(choice,new RadioGroup.LayoutParams(0,-2,1));
+            if(kind==current.kind())choice.setChecked(true);
+        }
+        kinds.setOnCheckedChangeListener((g,id)->applyKind());
+        root.addView(kinds,new LinearLayout.LayoutParams(-1,-2));
         LinearLayout.LayoutParams addressParams=new LinearLayout.LayoutParams(-1,-2);addressParams.topMargin=gap;root.addView(addressRow,addressParams);
-        root.addView(caption("密码"));
+        passwordBlock=new LinearLayout(this);passwordBlock.setOrientation(LinearLayout.VERTICAL);root.addView(passwordBlock,new LinearLayout.LayoutParams(-1,-2));
+        passwordBlock.addView(caption("密码"));
         password=field(current.password(),InputType.TYPE_CLASS_NUMBER,TxLampProtocol.PASSWORD_LENGTH);
-        root.addView(password,new LinearLayout.LayoutParams(-1,-2));
-        stepsValue=label("",16);steps=slider("档位数",root,stepsValue,LampSettings.MIN_STEPS,LampSettings.MAX_STEPS,current.steps(),v->v+" 档");
+        passwordBlock.addView(password,new LinearLayout.LayoutParams(-1,-2));
+        stepsBlock=new LinearLayout(this);stepsBlock.setOrientation(LinearLayout.VERTICAL);root.addView(stepsBlock,new LinearLayout.LayoutParams(-1,-2));
+        stepsValue=label("",16);steps=slider("档位数",stepsBlock,stepsValue,LampSettings.MIN_STEPS,LampSettings.MAX_STEPS,current.steps(),v->v+" 档");
+        jogBlock=new LinearLayout(this);jogBlock.setOrientation(LinearLayout.VERTICAL);root.addView(jogBlock,new LinearLayout.LayoutParams(-1,-2));
+        jogValue=label("",16);jog=slider("点动时长",jogBlock,jogValue,LampSettings.MIN_JOG_MS/LampSettings.JOG_STEP_MS,LampSettings.MAX_JOG_MS/LampSettings.JOG_STEP_MS,current.jogMs()/LampSettings.JOG_STEP_MS,v->String.format(java.util.Locale.ROOT,"%.1f 秒",v/10f));
         volumeControl=new Switch(this);volumeControl.setText("音量键调节高度");volumeControl.setTextColor(theme.text);volumeControl.setTextSize(16);
         volumeControl.setPadding(0,gap,0,0);volumeControl.setChecked(current.volumeControl());root.addView(volumeControl);
         reversed=new Switch(this);reversed.setText("反转方向");reversed.setTextColor(theme.text);reversed.setTextSize(16);
@@ -67,7 +82,20 @@ public final class LampSettingsActivity extends Activity {
         ScrollView scroll=new ScrollView(this);scroll.addView(root);scroll.setBackgroundColor(theme.surface);
         setContentView(scroll);
         watcher=state->{if(!saving)status.setText(describe(state));};
-        lamp.watch(watcher);
+        lamp.watch(watcher);applyKind();
+    }
+    private LampKind chosenKind(){
+        int index=kinds.indexOfChild(kinds.findViewById(kinds.getCheckedRadioButtonId()));
+        return index<0?LampKind.TX:LampKind.values()[index];
+    }
+    /** Only the fields the chosen controller has: a password for the keyed ones, notches for the positional ones, a run time for the rest. */
+    private void applyKind(){
+        LampKind kind=chosenKind();
+        passwordBlock.setVisibility(kind.needsPassword()?View.VISIBLE:View.GONE);
+        password.setInputType(kind==LampKind.ESC?InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD:InputType.TYPE_CLASS_NUMBER);
+        password.setFilters(new InputFilter[]{new InputFilter.LengthFilter(Math.max(1,kind.passwordLength))});
+        stepsBlock.setVisibility(kind.positional?View.VISIBLE:View.GONE);
+        jogBlock.setVisibility(kind.positional?View.GONE:View.VISIBLE);
     }
     /** The screen holds the link while visible, renewing every few seconds, and lets go when it leaves the screen. */
     private final android.os.Handler ui=new android.os.Handler(android.os.Looper.getMainLooper());
@@ -88,7 +116,8 @@ public final class LampSettingsActivity extends Activity {
     }
     private void startScan(){
         scan.setEnabled(false);status.setText("正在扫描");
-        lamp.scan(8000,outcome->{
+        LampKind kind=chosenKind();
+        lamp.scan(kind,8000,outcome->{
             scan.setEnabled(true);
             if(isFinishing()||isDestroyed())return;
             if(outcome.failure()!=0){status.setText("扫描失败 "+outcome.failure());return;}
@@ -98,7 +127,7 @@ public final class LampSettingsActivity extends Activity {
             for(LampController.Found device:all)if(device.matched())lamps.add(device);
             // Only the lamp controllers are offered; the whole list is a fallback so an unexpected name is still reachable.
             List<LampController.Found> devices=lamps.isEmpty()?all:List.copyOf(lamps);
-            status.setText(lamps.isEmpty()?"未找到大灯，全部 "+all.size()+" 个设备":"大灯 "+lamps.size()+" 个");
+            status.setText(lamps.isEmpty()?"未找到"+kind.label+"，全部 "+all.size()+" 个设备":kind.label+" "+lamps.size()+" 个");
             String[] items=new String[devices.size()];
             for(int i=0;i<devices.size();i++){
                 LampController.Found device=devices.get(i);
@@ -116,14 +145,15 @@ public final class LampSettingsActivity extends Activity {
     }
     private void commit(){
         String address=LampSettings.normalizeMac(mac.getText().toString());
-        String secret=password.getText().toString().trim();
+        LampKind kind=chosenKind();
+        String secret=kind.needsPassword()?password.getText().toString().trim():"";
         if(address.isEmpty()){status.setText("蓝牙地址无效");return;}
-        if(!TxLampProtocol.validPassword(secret)){status.setText("密码必须是 6 位数字");return;}
+        if(!kind.validPassword(secret)){status.setText(kind==LampKind.TX?"密码必须是 6 位数字":"密码必须是 6 个字符");return;}
         mac.setText(address);
         LampSettings next=new LampSettings(address,secret,LampSettings.DEFAULT_SPEED,steps.getProgress()+LampSettings.MIN_STEPS,
-                reversed.isChecked(),volumeControl.isChecked());
+                reversed.isChecked(),volumeControl.isChecked(),kind,(jog.getProgress()+LampSettings.MIN_JOG_MS/LampSettings.JOG_STEP_MS)*LampSettings.JOG_STEP_MS);
         lamp.save(next);lamp.hold(LampController.HOLD_SCREEN,LampController.SCREEN_HOLD_MS);
-        saving=true;save.setEnabled(false);status.setText("正在认证");
+        saving=true;save.setEnabled(false);status.setText(kind.needsPassword()?"正在认证":"正在连接");
         // The device answers the handshake within a couple of seconds; report whatever the link reached by then.
         status.postDelayed(()->{
             if(isFinishing()||isDestroyed())return;
@@ -148,6 +178,10 @@ public final class LampSettingsActivity extends Activity {
     private Button button(String text){
         Button view=new Button(this);view.setText(text);view.setAllCaps(false);theme.button(view,null);view.setTextSize(14);
         view.setMaxLines(1);view.setMinimumHeight(MirrorUi.dp(this,52));return view;
+    }
+    private RadioButton radio(String text){
+        RadioButton button=new RadioButton(this);button.setId(View.generateViewId());button.setText(text);button.setTextColor(theme.text);button.setTextSize(14);
+        button.setButtonTintList(ColorStateList.valueOf(theme.accent));button.setPadding(0,MirrorUi.dp(this,6),0,MirrorUi.dp(this,6));return button;
     }
     private EditText field(String value,int inputType,int length){
         int pad=MirrorUi.dp(this,12);

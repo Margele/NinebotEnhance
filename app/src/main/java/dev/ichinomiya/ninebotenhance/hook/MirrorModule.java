@@ -76,6 +76,7 @@ public final class MirrorModule extends XposedModule {
     @Override public void onModuleLoaded(ModuleLoadedParam param) {
         process = param.getProcessName(); ModuleResources.initialize(getModuleApplicationInfo().sourceDir);
     }
+
     /** Ninebot runs helper processes (":pushcore" and others); only the main process shows the vehicle page and needs the module. */
     private boolean mainProcess() { return process == null || process.equals(Protocol.TARGET); }
     @Override public void onPackageLoaded(PackageLoadedParam param) {
@@ -109,6 +110,8 @@ public final class MirrorModule extends XposedModule {
         encoding.install();
         direct = new DirectCastController(frames, () -> compatibleVersion);
         frames.report("MODULE " + Protocol.VERSION + " loaded API=" + getApiVersion() + "; target=" + HookCatalog.versions() + "; direct cruise entry");
+        updateSummary();
+        scheduleScan();
         try {
             Method attach = Application.class.getDeclaredMethod("attach", Context.class);
             hook(attach).intercept(chain -> {

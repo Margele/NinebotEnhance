@@ -27,8 +27,9 @@ import java.util.regex.Pattern;
 /**
  * The module's button row on the vehicle page: virtual display, cast, settings. As in 1.1.4 it sits inside Ninebot's navigation
  * card (layout_detail_navigation_card, res/0oW.xml, identical in 6.10.10 and 6.10.11) below layoutHistory, taking over that view's
- * bottom constraint. The card only appears while the vehicle is connected, so the row comes and goes with it; the ownership line at
- * the bottom of the page is the offline way into the settings. The page is walked from its decor view: right after the card
+ * bottom constraint. The card only appears while the vehicle is connected, so the row comes and goes with it; the line at the
+ * bottom of the page (ownership days, or the vehicle name on a family account) is the offline way into the settings. The page is
+ * walked from its decor view: right after the card
  * inflates and, as before, every 1.2 s while a host activity is in front.
  */
 public final class VehicleCardInjector {
@@ -39,8 +40,8 @@ public final class VehicleCardInjector {
     private static final int SCAN_BUDGET = 2500;
     /** Ninebot's own inner-control look on the vehicle page: color_select_bg on a 15 dp radius, no outline (background_card_gray_r15). */
     private static final int NINEBOT_FILL_DARK = 0xff1c1f24, NINEBOT_FILL_LIGHT = 0xfff3f5f8, NINEBOT_RADIUS_DP = 15;
-    /** The ownership-days line at the bottom of the vehicle page; its text is data-driven, so it is matched by content. */
-    private static final Pattern OWNERSHIP = Pattern.compile("拥有爱车");
+    /** The bottom line of the vehicle page: the ownership days on a personal account, the vehicle name on a family account. */
+    private static final Pattern OWNERSHIP = Pattern.compile("拥有爱车|的九号电");
     /** One installed row; {@code anchor} is the card it was placed against and doubles as the theme reference. */
     public record Row(LinearLayout view, ImageButton display, Button cast, Button settings, View anchor, MirrorUi theme) {}
     private final WeakHashMap<View, Boolean> ownershipLabels = new WeakHashMap<>();
@@ -223,11 +224,26 @@ public final class VehicleCardInjector {
             frames.report("FEATURE hardkey card failed " + e.getClass().getSimpleName());
         }
     }
-    /** A second way into the settings: tapping the ownership-days line opens the same dialog as the row button. */
+    /** A second way into the settings: tapping the bottom line opens the same dialog as the row button. */
     private void ownershipEntry(TextView label) {
         if (ownershipLabels.containsKey(label)) return;
         CharSequence value = label.getText(); if (value == null || !OWNERSHIP.matcher(value).find()) return;
-        if (label.hasOnClickListeners()) { ownershipLabels.put(label, Boolean.FALSE); frames.report("DIRECT UI ownership label already clickable; left alone"); return; }
+        if (label.hasOnClickListeners()) {
+            // A family account shows the vehicle name there and Ninebot may already handle the tap; the long press is free.
+            if (label.hasOnLongClickListeners()) {
+                ownershipLabels.put(label, Boolean.FALSE);
+                frames.report("DIRECT UI vehicle label already clickable; left alone");
+                return;
+            }
+            label.setOnLongClickListener(v -> {
+                Activity activity = activity(v.getContext());
+                if (activity != null && !activity.isFinishing()) controller.settings(activity, v);
+                return true;
+            });
+            ownershipLabels.put(label, Boolean.TRUE);
+            frames.report("DIRECT UI vehicle label long press opens settings");
+            return;
+        }
         label.setOnClickListener(v -> { Activity activity = activity(v.getContext()); if (activity != null && !activity.isFinishing()) controller.settings(activity, v); });
         ownershipLabels.put(label, Boolean.TRUE); frames.report("DIRECT UI ownership label doubles as a settings entry");
     }

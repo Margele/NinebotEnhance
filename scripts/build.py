@@ -73,7 +73,7 @@ def main():
         manifest_root.set('{http://schemas.android.com/apk/res/android}versionCode',code)
         build_manifest=work/'AndroidManifest.xml';manifest_source.write(build_manifest,encoding='utf-8',xml_declaration=True)
         run([tool(bt,'aapt2'),'link','-I',android,'--manifest',build_manifest,'--java',generated,
-             '--min-sdk-version','34','--target-sdk-version','36','-o',work/'base.apk',work/'resources.zip'],records)
+             '--min-sdk-version','33','--target-sdk-version','36','-o',work/'base.apk',work/'resources.zip'],records)
         sources=sorted((ROOT/'app/src/main/java').rglob('*.java'))+sorted(generated.rglob('*.java'))
         response=work/'sources.rsp';response.write_text('\n'.join('"'+p.as_posix()+'"' for p in sources),encoding='utf-8')
         run([tool(jdk/'bin','javac'),'-encoding','UTF-8','--release','17','-classpath',os.pathsep.join(map(str,[android]+compile_only+runtime)),'-d',classes,'@'+str(response)],records)
@@ -86,7 +86,7 @@ def main():
         jar=work/'program.jar'
         with zipfile.ZipFile(jar,'w',zipfile.ZIP_DEFLATED) as archive:
             for p in sorted(classes.rglob('*.class')):archive.write(p,p.relative_to(classes).as_posix())
-        run([tool(jdk/'bin','java'),'-cp',bt/'lib/d8.jar','com.android.tools.r8.D8','--release','--min-api','34','--lib',android,
+        run([tool(jdk/'bin','java'),'-cp',bt/'lib/d8.jar','com.android.tools.r8.D8','--release','--min-api','33','--lib',android,
              '--classpath',compile_only[0],'--classpath',compile_only[1],'--output',dex,jar]+runtime,records)
         unsigned=work/'unsigned.apk';shutil.copyfile(work/'base.apk',unsigned)
         resources=ROOT/'app/src/main/resources'
@@ -108,8 +108,9 @@ def main():
         assert f"package: name='{PACKAGE}'" in badging and f"versionCode='{code}'" in badging and f"versionName='{name}'" in badging
         assert "application-label:'Ninebot Enhance'" in badging and "launchable-activity: name='"+PACKAGE+".ui.ModuleActivity'" in badging
         manifest=run([tool(bt,'aapt2'),'dump','xmltree',apk,'--file','AndroidManifest.xml'],records)
-        assert len(re.findall(r'^\s*E: activity\s',manifest,re.MULTILINE)) == 7
+        assert len(re.findall(r'^\s*E: activity\s',manifest,re.MULTILINE)) == 8
         assert '.ui.LaunchAppPickerActivity' in manifest and '.ui.TouchSettingsActivity' in manifest
+        assert '.ui.ScreenProfileSettingsActivity' in manifest
         assert '.ui.NotificationSettingsActivity' in manifest and '.notification.MirrorNotificationListener' in manifest
         assert 'android.permission.BIND_NOTIFICATION_LISTENER_SERVICE' in manifest
         assert '.ui.ScreenCaptureConsentActivity' in manifest and '.service.ScreenCaptureService' in manifest
@@ -134,7 +135,7 @@ def main():
                 assert 'L'+PACKAGE.replace('.','/')+'/'+required+';' in definitions,required
             for required in ['core/LogArchive','service/LogShareProvider','service/LogExport','client/LogExporter','platform/ModuleResources','ui/AboutDialog','ui/LogDialog','ui/SettingsFooter']:
                 assert 'L'+PACKAGE.replace('.','/')+'/'+required+';' in definitions,required
-            for required in ['core/NotificationTimeline','notification/DashboardHud','notification/NotificationHub','notification/PhoneStatus','notification/NotificationPreferences','notification/MirrorNotificationListener','ui/NotificationSettingsActivity','ui/LaunchAppPickerActivity']:
+            for required in ['core/NotificationTimeline','notification/DashboardHud','notification/NotificationHub','notification/PhoneStatus','notification/NotificationPreferences','notification/MirrorNotificationListener','ui/NotificationSettingsActivity','ui/LaunchAppPickerActivity','ui/ScreenProfileSettingsActivity']:
                 assert 'L'+PACKAGE.replace('.','/')+'/'+required+';' in definitions,required
             for required in ['core/MusicPlayback','notification/MusicStatus','core/BatteryTelemetry','hook/VehicleHooks','core/TireTelemetry','hook/TirePressureHooks','ui/WidgetOptionsDialog','ui/WidgetConditionDialog','ui/RangeBar','ui/WidgetSettingsDialog','core/WidgetCondition','core/CardMotion','notification/VolumeStatus','notification/DashboardOcclusion','hook/HookCatalog','core/RegisterProbe','core/RideState','core/HillHoldDetector','ui/RegisterProbeDialog']:
                 assert 'L'+PACKAGE.replace('.','/')+'/'+required+';' in definitions,required

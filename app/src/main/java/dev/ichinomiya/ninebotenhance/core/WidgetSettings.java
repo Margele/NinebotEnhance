@@ -30,8 +30,10 @@ public record WidgetSettings(int mask,int tyreIntervalSeconds,int voltageInterva
     /** Widgets that accept a display condition, in the index order the renderer uses for its timers. */
     public static final int[] CONDITIONAL={PHONE,MUSIC,TYRES,VOLTAGE,SPEED,POWER,NOTIFICATIONS,VOLUME,LAMP,BMS};
     public static final int MIN_TYRE_SECONDS=5,MAX_TYRE_SECONDS=60,DEFAULT_TYRE_SECONDS=30;
-    /** Voltage, speed and power are read at sub-second intervals; sliders move in READ_STEP_MS steps. */
+    /** Voltage and power are read at sub-second intervals; their sliders move in READ_STEP_MS steps. */
     public static final int MIN_READ_MS=500,MAX_READ_MS=15000,DEFAULT_READ_MS=1000,READ_STEP_MS=500;
+    /** The speed read keeps its own floor, step and default so the small screen can follow the wheel several times a second. */
+    public static final int MIN_SPEED_READ_MS=200,SPEED_READ_STEP_MS=100,DEFAULT_SPEED_READ_MS=500;
     public static final int MIN_MUSIC_HIDE_SECONDS=3,MAX_MUSIC_HIDE_SECONDS=15,DEFAULT_MUSIC_HIDE_SECONDS=5;
     /** Voltage, speed and power charts each keep their own window within the same range. */
     public static final int MIN_CHART_SECONDS=10,MAX_CHART_SECONDS=60,DEFAULT_CHART_SECONDS=30;
@@ -41,7 +43,7 @@ public record WidgetSettings(int mask,int tyreIntervalSeconds,int voltageInterva
     /** Readings older than these multiples of their read interval are shown as unknown instead of as stale numbers. */
     public static final int TYRE_EXPIRY_FACTOR=2,VOLTAGE_EXPIRY_FACTOR=5;
     public static final WidgetSettings DEFAULT=new WidgetSettings(ALL&~OFF_BY_DEFAULT,DEFAULT_TYRE_SECONDS,DEFAULT_READ_MS,DEFAULT_MUSIC_HIDE_SECONDS,DEFAULT_CHART_SECONDS,
-            DEFAULT_HOLD_POWER,DEFAULT_HOLD_SPEED,DEFAULT_READ_MS,DEFAULT_READ_MS,DEFAULT_HOLD_POWER_MAX,DEFAULT_HOLD_SECONDS,DEFAULT_CHART_SECONDS,DEFAULT_CHART_SECONDS,DEFAULT_ORDER,Map.of());
+            DEFAULT_HOLD_POWER,DEFAULT_HOLD_SPEED,DEFAULT_SPEED_READ_MS,DEFAULT_READ_MS,DEFAULT_HOLD_POWER_MAX,DEFAULT_HOLD_SECONDS,DEFAULT_CHART_SECONDS,DEFAULT_CHART_SECONDS,DEFAULT_ORDER,Map.of());
     public WidgetSettings{
         mask&=ALL;
         tyreIntervalSeconds=clamp(tyreIntervalSeconds,MIN_TYRE_SECONDS,MAX_TYRE_SECONDS);
@@ -50,7 +52,7 @@ public record WidgetSettings(int mask,int tyreIntervalSeconds,int voltageInterva
         chartSeconds=clamp(chartSeconds,MIN_CHART_SECONDS,MAX_CHART_SECONDS);
         holdPowerMin=clamp(holdPowerMin,MIN_HOLD_POWER,MAX_HOLD_POWER);
         holdSpeedMax=clamp(holdSpeedMax,MIN_HOLD_SPEED,MAX_HOLD_SPEED);
-        speedIntervalMs=clamp(speedIntervalMs,MIN_READ_MS,MAX_READ_MS);
+        speedIntervalMs=clampSpeed(speedIntervalMs);
         powerIntervalMs=clamp(powerIntervalMs,MIN_READ_MS,MAX_READ_MS);
         holdPowerMax=clamp(holdPowerMax,MIN_HOLD_POWER_MAX,MAX_HOLD_POWER_MAX);
         holdSeconds=clamp(holdSeconds,MIN_HOLD_SECONDS,MAX_HOLD_SECONDS);
@@ -62,7 +64,7 @@ public record WidgetSettings(int mask,int tyreIntervalSeconds,int voltageInterva
     public WidgetSettings(int mask){this(mask,DEFAULT_TYRE_SECONDS,DEFAULT_READ_MS,DEFAULT_MUSIC_HIDE_SECONDS,DEFAULT_CHART_SECONDS);}
     public WidgetSettings(int mask,int tyreIntervalSeconds,int voltageIntervalMs,int musicHideSeconds,int chartSeconds){this(mask,tyreIntervalSeconds,voltageIntervalMs,musicHideSeconds,chartSeconds,DEFAULT_HOLD_POWER,DEFAULT_HOLD_SPEED);}
     public WidgetSettings(int mask,int tyreIntervalSeconds,int voltageIntervalMs,int musicHideSeconds,int chartSeconds,int holdPowerMin,int holdSpeedMax){
-        this(mask,tyreIntervalSeconds,voltageIntervalMs,musicHideSeconds,chartSeconds,holdPowerMin,holdSpeedMax,DEFAULT_READ_MS,DEFAULT_READ_MS,DEFAULT_HOLD_POWER_MAX,DEFAULT_HOLD_SECONDS);
+        this(mask,tyreIntervalSeconds,voltageIntervalMs,musicHideSeconds,chartSeconds,holdPowerMin,holdSpeedMax,DEFAULT_SPEED_READ_MS,DEFAULT_READ_MS,DEFAULT_HOLD_POWER_MAX,DEFAULT_HOLD_SECONDS);
     }
     public WidgetSettings(int mask,int tyreIntervalSeconds,int voltageIntervalMs,int musicHideSeconds,int chartSeconds,int holdPowerMin,int holdSpeedMax,
                           int speedIntervalMs,int powerIntervalMs,int holdPowerMax,int holdSeconds){
@@ -77,7 +79,7 @@ public record WidgetSettings(int mask,int tyreIntervalSeconds,int voltageInterva
         return migrate(version,mask,tyreSeconds,voltageMs,musicHideSeconds,chartSeconds,DEFAULT_HOLD_POWER,DEFAULT_HOLD_SPEED);
     }
     public static WidgetSettings migrate(int version,int mask,int tyreSeconds,int voltageMs,int musicHideSeconds,int chartSeconds,int holdPowerMin,int holdSpeedMax){
-        return migrate(version,mask,tyreSeconds,voltageMs,musicHideSeconds,chartSeconds,holdPowerMin,holdSpeedMax,DEFAULT_READ_MS,DEFAULT_READ_MS,DEFAULT_HOLD_POWER_MAX,DEFAULT_HOLD_SECONDS);
+        return migrate(version,mask,tyreSeconds,voltageMs,musicHideSeconds,chartSeconds,holdPowerMin,holdSpeedMax,DEFAULT_SPEED_READ_MS,DEFAULT_READ_MS,DEFAULT_HOLD_POWER_MAX,DEFAULT_HOLD_SECONDS);
     }
     public static WidgetSettings migrate(int version,int mask,int tyreSeconds,int voltageMs,int musicHideSeconds,int chartSeconds,int holdPowerMin,int holdSpeedMax,
                                          int speedMs,int powerMs,int holdPowerMax,int holdSeconds){
@@ -100,6 +102,8 @@ public record WidgetSettings(int mask,int tyreIntervalSeconds,int voltageInterva
     public WidgetSettings withMask(int value){return new WidgetSettings(value,tyreIntervalSeconds,voltageIntervalMs,musicHideSeconds,chartSeconds,holdPowerMin,holdSpeedMax,speedIntervalMs,powerIntervalMs,holdPowerMax,holdSeconds,speedChartSeconds,powerChartSeconds,order,conditions);}
     public WidgetSettings intervals(int tyreSeconds,int voltageMs){return readIntervals(tyreSeconds,voltageMs,speedIntervalMs,powerIntervalMs);}
     public WidgetSettings readIntervals(int tyreSeconds,int voltageMs,int speedMs,int powerMs){return new WidgetSettings(mask,tyreSeconds,voltageMs,musicHideSeconds,chartSeconds,holdPowerMin,holdSpeedMax,speedMs,powerMs,holdPowerMax,holdSeconds,speedChartSeconds,powerChartSeconds,order,conditions);}
+    /** The speed read interval alone; the slider on the protection board page owns it. */
+    public WidgetSettings speedInterval(int value){return readIntervals(tyreIntervalSeconds,voltageIntervalMs,value,powerIntervalMs);}
     public WidgetSettings musicHide(int seconds){return new WidgetSettings(mask,tyreIntervalSeconds,voltageIntervalMs,seconds,chartSeconds,holdPowerMin,holdSpeedMax,speedIntervalMs,powerIntervalMs,holdPowerMax,holdSeconds,speedChartSeconds,powerChartSeconds,order,conditions);}
     /** Voltage chart window. */
     public WidgetSettings chart(int seconds){return new WidgetSettings(mask,tyreIntervalSeconds,voltageIntervalMs,musicHideSeconds,seconds,holdPowerMin,holdSpeedMax,speedIntervalMs,powerIntervalMs,holdPowerMax,holdSeconds,speedChartSeconds,powerChartSeconds,order,conditions);}
@@ -176,4 +180,8 @@ public record WidgetSettings(int mask,int tyreIntervalSeconds,int voltageInterva
     /** rSpeed reports 0.1 km/h units. */
     public int holdSpeedMaxTenths(){return holdSpeedMax*10;}
     private static int clamp(int value,int min,int max){return Math.max(min,Math.min(max,value));}
+    /** The speed interval rounded onto its own 100 ms step between its floor and the shared maximum. */
+    public static int clampSpeed(int value){return SPEED_READ_STEP_MS*clamp(value/SPEED_READ_STEP_MS,MIN_SPEED_READ_MS/SPEED_READ_STEP_MS,MAX_READ_MS/SPEED_READ_STEP_MS);}
+    public static int speedSteps(int ms){return clampSpeed(ms)/SPEED_READ_STEP_MS;}
+    public static int speedFromSteps(int steps){return clampSpeed(steps*SPEED_READ_STEP_MS);}
 }

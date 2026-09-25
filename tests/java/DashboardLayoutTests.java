@@ -97,8 +97,8 @@ final class DashboardLayoutTests {
         check(sevenLayout.frameWidth()==1024&&sevenLayout.referenceOcclusions().get(0).top()==480&&sevenLayout.referenceOcclusions().get(0).left()==638,"configured rectangles convert through the same profile fit");
         check(SidebarLayout.notificationWidth(312,true)==190&&SidebarLayout.notificationWidth(312,false)==312&&SidebarLayout.notificationWidth(180,true)==180,"half-screen notifications are capped at the column width");
         check(small.virtualHeight==300&&DisplaySettings.defaults().withFrame(636,360).virtualHeight==360,"a portrait frame keeps a 20 px strip above the app");
-        DisplaySettings retired=DisplaySettings.read((k,f)->k.equals("compat_scale")?1:k.equals("layout_version")?2:f);
-        check(retired.keepPhoneDpi&&retired.label().contains("保持手机 DPI")&&!retired.label().contains("兼容")&&retired.renderPlan(520)!=null,"the retired compat flag is ignored: keep-DPI has one implementation and always yields a render plan");
+        DisplaySettings restored=DisplaySettings.read((k,f)->k.equals("compat_scale")?1:k.equals("layout_version")?2:f);
+        check(restored.keepPhoneDpi&&restored.compatScale&&restored.label().contains("保持手机 DPI，兼容缩放")&&restored.renderPlan(520)!=null&&!DisplaySettings.defaults().compatScale,"the stored compat flag selects the scaling path and shows in the label; the render plan is the same either way");
         int stackMask=WidgetSettings.PHONE|WidgetSettings.MUSIC|WidgetSettings.TYRES|WidgetSettings.VOLTAGE|WidgetSettings.SPEED|WidgetSettings.POWER|WidgetSettings.LAMP;
         SidebarLayout.Stack single=SidebarLayout.arrange(WidgetSettings.DEFAULT,stackMask,0,SidebarLayout.fullWidth(),true,List.of(SidebarLayout.INSTRUMENT),true);
         SidebarLayout.Stack twoColumn=SidebarLayout.arrange(WidgetSettings.DEFAULT,stackMask,0,SidebarLayout.fullWidth(),false,List.of(SidebarLayout.INSTRUMENT),false);

@@ -104,6 +104,15 @@ public final class FrameBridgeService extends Service {
                     break;
                 }
                 case Protocol.UPDATE_CHECK: result = UpdateChecker.get(FrameBridgeService.this).snapshot(args.getBoolean("refresh")); break;
+                case Protocol.SCREEN_PROFILE_SETTINGS: {
+                    android.app.ActivityOptions screenOptions = android.app.ActivityOptions.makeBasic();
+                    if (Build.VERSION.SDK_INT >= 35) screenOptions.setPendingIntentCreatorBackgroundActivityStartMode(android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+                    Intent screenIntent = new Intent(FrameBridgeService.this, dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.class)
+                            .putExtra("dark", args.getBoolean("dark", true));
+                    result.putParcelable("screen_intent", android.app.PendingIntent.getActivity(FrameBridgeService.this, 806, screenIntent,
+                            android.app.PendingIntent.FLAG_IMMUTABLE | android.app.PendingIntent.FLAG_UPDATE_CURRENT, screenOptions.toBundle()));
+                    break;
+                }
                 case Protocol.READ:
                     result = projectionSource ? projection.status() : session.status();
                     // The poll carries whether a Ninebot screen is visible; the lamp and BMS links follow it (see NotificationHub.hostVisible).

@@ -44,7 +44,7 @@ public final class VehicleHooks {
     private final Handler reader;
     private volatile Class<?> deviceClass;
     private final AtomicInteger sent=new AtomicInteger(),replied=new AtomicInteger(),silent=new AtomicInteger(),pending=new AtomicInteger(),silenceLogged=new AtomicInteger();
-    private volatile long nextAttempt,lastReply,lastCensus,lastDisplayVoltage,lastTyreRead,lastVoltageRead,lastCrossCheck;
+    private volatile long nextAttempt,lastReply,lastCensus,lastDisplayVoltage,lastTyreRead,lastVoltageRead,lastCrossCheck,lastLevelRead;
     private volatile boolean sessionLogged,probed;
     private volatile WidgetSettings settings=WidgetSettings.DEFAULT;
     /** Lithium bay mask observed passively from the rBool register Ninebot polls itself; -1 until seen. */
@@ -151,6 +151,11 @@ public final class VehicleHooks {
             return;
         }
         if(probe||level){
+            if(level){
+                Integer percent=BatteryTelemetry.decodeLevel(tag,data);
+                if(percent==null){if(failures.add("decode "+tag))frames.report("VEHICLE "+tag+" ignored: implausible payload "+hex(data));}
+                else battery.updatePercent(vehicle,percent,BatteryTelemetry.Source.BLUETOOTH,System.currentTimeMillis(),now);
+            }
             Long last=frameLogged.get(tag);
             if(probe||last==null||now-last>=FRAME_LOG_INTERVAL_MS){frameLogged.put(tag,now);frames.report("VEHICLE "+(probe?"probe ":"dash ")+tag+" bytes="+hex(data)+" "+BatteryTelemetry.describe(data));}
             return;
@@ -196,7 +201,7 @@ public final class VehicleHooks {
     /** Session end or disabled switch: flush the census, forget per-session state and let the next session read immediately. */
     public void stop(){probePending.set(0);frames.rideData().clear();
         if(sessionLogged){sessionLogged=false;reader.post(()->{reportCensus();frames.report("VEHICLE session summary "+summary());});}
-        lastTyreRead=lastVoltageRead=lastCrossCheck=lastCensus=0;muted.clear();silentStreak.clear();sendLogged.clear();replyLogged.clear();supportCache.clear();silenceLogged.set(0);probed=false;
+        lastTyreRead=lastVoltageRead=lastCrossCheck=lastCensus=lastLevelRead=0;muted.clear();silentStreak.clear();sendLogged.clear();replyLogged.clear();supportCache.clear();silenceLogged.set(0);probed=false;
     }
     public String summary(){
         long now=SystemClock.elapsedRealtime();
@@ -225,6 +230,7 @@ public final class VehicleHooks {
             List<String> due=new ArrayList<>();
             if(s.readsTyres()&&now-lastTyreRead>=s.tyreIntervalSeconds()*1000L&&ready(TireTelemetry.REALTIME_COMMAND)){lastTyreRead=now;due.add(TireTelemetry.REALTIME_COMMAND);}
             if(s.readsVoltage()&&now-lastVoltageRead>=s.voltageIntervalMs()){String command=voltageCommand();if(command!=null&&ready(command)){lastVoltageRead=now;due.add(command);}}
+            if(s.readsVoltage()&&now-lastLevelRead>=s.voltageIntervalMs()&&ready(BatteryTelemetry.DASH_LEVEL_COMMAND)){lastLevelRead=now;due.add(BatteryTelemetry.DASH_LEVEL_COMMAND);}
             if(s.readsVoltage()&&now-lastCrossCheck>=CROSS_CHECK_INTERVAL_MS){lastCrossCheck=now;for(String bay:BatteryTelemetry.bayCommands(bays))if(!due.contains(bay)&&ready(bay))due.add(bay);}
             if(s.readsSpeed()&&now-lastSpeedRead>=s.speedIntervalMs()&&ready(RideState.SPEED_COMMAND)){lastSpeedRead=now;if(!due.contains(RideState.SPEED_COMMAND))due.add(RideState.SPEED_COMMAND);}
             if(s.readsPower()&&now-lastPowerRead>=s.powerIntervalMs()&&ready(RideState.POWER_COMMAND)){lastPowerRead=now;if(!due.contains(RideState.POWER_COMMAND))due.add(RideState.POWER_COMMAND);}

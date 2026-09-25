@@ -55,6 +55,8 @@ public final class RootSession {
     private String backend = "未启动";
     /** The daemon's first injection refusal this session (INJECT_EVENTS), surfaced to the host so it can guide the user once. */
     private String inputDenied = "";
+    /** WindowManager refused the forced logical size this session; compat scaling is already persisted for the next one. */
+    private boolean renderFallback;
     private volatile String previousExit = "系统退出记录尚未读取";
     private long lastInputError;
     private int appRecovery;
@@ -98,18 +100,43 @@ public final class RootSession {
         Bundle data = new Bundle(); Ipc.settings(data, settings());
         data.putString(AppCatalog.SELECTED, context.getSharedPreferences("virtual_display", 0).getString(AppCatalog.SELECTED, ""));
         data.putString("privilege_mode", PrivilegeManager.mode(context).name());
+        data.putInt(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.MODE, screenProfile());
+        data.putInt(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.FONT,
+                dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.defaultFont(context) ? 1 : 0);
+        smallStyle(data);
         return data;
+    }
+    /** The small panel's colours and source ride the same bundle as the shape, so the renderer never reads them itself. */
+    private void smallStyle(Bundle data) {
+        data.putInt(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.BG_COLOR,
+                dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.smallBackgroundColor(context));
+        data.putInt(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.SPEED_COLOR,
+                dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.speedColor(context));
+        data.putInt(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.ROW1_COLOR,
+                dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.row1Color(context));
+        data.putInt(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.ROW2_COLOR,
+                dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.row2Color(context));
+        data.putInt(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.SOURCE,
+                dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.smallSource(context));
+    }
+    /** The screen profile page's shape: the small 240 x 320 panel runs the module's own HUD and needs no launch app. */
+    private int screenProfile() {
+        return dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.mode(context);
+    }
+    private boolean smallScreen() {
+        return screenProfile() == dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.SMALL_240;
     }
     public void saveSettings(DisplaySettings value, String selected) {
         // PackageManager is a remote call: validate outside the session lock.
-        ComponentName app = AppCatalog.requireLauncher(context.getPackageManager(), selected);
+        ComponentName app = selected.isEmpty() && smallScreen() ? null
+                : AppCatalog.requireLauncher(context.getPackageManager(), selected);
         synchronized (this) {
             if (lease.request() != null) throw new IllegalStateException("请先停止投屏再修改设置");
             context.getSharedPreferences("virtual_display", 0).edit().putInt("width", value.width)
                     .putInt("height",value.height).putInt("dpi",value.dpi)
                     .putInt("layout_version",DisplaySettings.LAYOUT_VERSION).putInt("virtual_width",value.virtualWidth).putInt("virtual_height",value.virtualHeight)
-                    .putInt("background_color",value.backgroundColor).putInt("keep_phone_dpi",value.keepPhoneDpi?1:0).putInt("virtual_override",value.virtualOverride?1:0).putInt("light_background_color",value.lightBackgroundColor).putInt("bottom_inset",value.bottomInset).remove("top_inset").remove("top_color")
-                    .putString(AppCatalog.SELECTED, app.flattenToString()).apply();
+                    .putInt("background_color",value.backgroundColor).putInt("keep_phone_dpi",value.keepPhoneDpi?1:0).putInt("compat_scale",value.compatScale?1:0).putInt("virtual_override",value.virtualOverride?1:0).putInt("light_background_color",value.lightBackgroundColor).putInt("bottom_inset",value.bottomInset).remove("top_inset").remove("top_color")
+                    .putString(AppCatalog.SELECTED, app == null ? "" : app.flattenToString()).apply();
         }
     }
     /** Keep-DPI: the surface size and density the client created for this session (0 when the phone density already matches). */
@@ -126,7 +153,7 @@ public final class RootSession {
             if (!permission.getBoolean("start_allowed")) throw new IllegalStateException(permission.getString("start_permission_message"));
             authorized = StartPermission.Backend.valueOf(permission.getString("start_backend"));
             if (authorized == StartPermission.Backend.MEDIA_PROJECTION) throw new IllegalStateException("录屏模式不能创建独立虚拟屏");
-            app = AppCatalog.requireLauncher(context.getPackageManager(), selected);
+            app = selected.isEmpty() && smallScreen() ? null : AppCatalog.requireLauncher(context.getPackageManager(), selected);
         }
         catch (RuntimeException e) { output.release(); throw e; }
         String secret = UUID.randomUUID().toString().replace("-", "");
@@ -134,7 +161,7 @@ public final class RootSession {
             if (android.os.Process.myUid() / 100000 != 0) { output.release(); throw new IllegalStateException("此版本仅支持手机主用户"); }
             if (!lease.begin(request, secret)) { output.release(); throw new IllegalStateException("已有投屏正在运行"); }
             current = requested; launchApp = app; surface = output; owner = client; ownerUid = uid; root = null; displayId = -1;
-            appRecovery = AppRecoveryState.HIDDEN; appRecoveryAt = 0; appRecoveryDetail = ""; touchPresent = false; inputDenied = "";
+            appRecovery = AppRecoveryState.HIDDEN; appRecoveryAt = 0; appRecoveryDetail = ""; touchPresent = false; inputDenied = ""; renderFallback = false;
             appLayoutPolicy = "not-created";
             lastRequest = request; backend = "正在选择授权方式"; state = backend;
             ownerDeath = () -> stop(request, "九号进程已退出");
@@ -203,6 +230,11 @@ public final class RootSession {
             } else if ("touch_state".equals(method)) {
                 boolean present = args.getBoolean("present");
                 if (present != touchPresent) { touchPresent = present; Diagnostics.add("TOUCH panel " + (present ? "present" : "absent")); }
+            } else if ("render_fallback".equals(method)) {
+                // The ROM denied the forced size/density to the daemon: this session runs at the buffer size, and keep-DPI takes the
+                // compat scaling path from the next session on. The setting is flipped for real, so the dialog shows it checked.
+                renderFallback = true; context.getSharedPreferences("virtual_display", 0).edit().putInt("compat_scale", 1).apply();
+                Diagnostics.add("ROOT RENDER fallback reported; compat scaling switched on for the next session");
             } else if ("input_denied".equals(method)) {
                 inputDenied = LogDigest.head(args.getString("error", ""), 360); Diagnostics.add("INPUT denied by the system: " + inputDenied);
             } else if ("error".equals(method)) {
@@ -226,11 +258,17 @@ public final class RootSession {
         result.putString(Protocol.APP_LAYOUT_POLICY, appLayoutPolicy);
         result.putBoolean("touch_bound", touchPanel().bound()); result.putBoolean("touch_present", touchPresent && lease.request() != null);
         result.putString("input_denied", lease.request() != null ? inputDenied : "");
+        result.putBoolean("render_fallback", renderFallback && lease.request() != null);
         result.putString(AppCatalog.SELECTED, launchApp == null ? "" : launchApp.flattenToString());
         boolean recent = appRecoveryAt != 0 && SystemClock.elapsedRealtime() - appRecoveryAt < 5000 && lease.isReady();
         result.putInt(Protocol.APP_RECOVERY, recent ? appRecovery : AppRecoveryState.HIDDEN);
         result.putString(Protocol.APP_RECOVERY_DETAIL, recent ? appRecoveryDetail : "");
-        Ipc.settings(result, current == null ? settings() : current); return result;
+        Ipc.settings(result, current == null ? settings() : current);
+        result.putInt(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.MODE, screenProfile());
+        result.putInt(dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.FONT,
+                dev.ichinomiya.ninebotenhance.ui.ScreenProfileSettingsActivity.defaultFont(context) ? 1 : 0);
+        smallStyle(result);
+        return result;
     }
     public synchronized boolean owns(String id) { return lease.owns(id); }
     public synchronized boolean ready(String id) { return lease.owns(id) && lease.isReady(); }

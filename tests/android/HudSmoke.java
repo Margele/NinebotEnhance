@@ -64,6 +64,19 @@ public final class HudSmoke {
         for(int y=top;y<bottom;y++)for(int x=left;x<right;x++){int p=image.getPixel(x,y);if(Color.red(p)>160&&Color.green(p)>160)return true;}
         return false;
     }
+    private static boolean shade(Bitmap image,int colour,int left,int top,int right,int bottom){
+        int r=Color.red(colour),g=Color.green(colour),b=Color.blue(colour);
+        for(int y=top;y<bottom;y++)for(int x=left;x<right;x++){
+            int p=image.getPixel(x,y);
+            if(Math.abs(Color.red(p)-r)<14&&Math.abs(Color.green(p)-g)<14&&Math.abs(Color.blue(p)-b)<14)return true;
+        }
+        return false;
+    }
+    private static int lit(Bitmap image,int left,int top,int right,int bottom){
+        int count=0;
+        for(int y=top;y<bottom;y++)for(int x=left;x<right;x++){int p=image.getPixel(x,y);if(Color.red(p)>160&&Color.green(p)>160&&Color.blue(p)>160)count++;}
+        return count;
+    }
     /** Same font as the HUD percentage, so the tests can locate the right-anchored phone elements. */
     private static float percentWidth(String percent){android.graphics.Paint p=new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);p.setTextSize(14);p.setTypeface(android.graphics.Typeface.create("sans-serif",android.graphics.Typeface.BOLD));return p.measureText(percent);}
     public static void main(String[] args) {
@@ -282,6 +295,42 @@ public final class HudSmoke {
         Bitmap lightFrame=Bitmap.createBitmap(848,480,Bitmap.Config.ARGB_8888);Canvas lightCanvas=new Canvas(lightFrame);lightCanvas.drawColor(0xffe6eaee);light.draw(lightCanvas,848,480,101500);
         var lightStack=light.stack(101500);int lightSurface=lightFrame.getPixel((int)lightStack.music().right()-4,(int)lightStack.music().top()+32);
         check(!light.dark()&&Color.red(lightSurface)>230&&Color.green(lightSurface)>230&&Color.blue(lightSurface)>230,"light theme paints cards on a near-white surface, got #"+Integer.toHexString(lightSurface)+" box="+lightStack.music()+" notifications="+light.summary(101500));
+        // The 2.4 inch screen profile: the module's own speed and battery blocks replace every card on the whole panel.
+        DashboardHud panelHud=new DashboardHud();panelHud.reset("small");panelHud.setSmallScreen(true);
+        panelHud.accept("small",state(0),100000);panelHud.acceptBattery(batteryState());
+        panelHud.acceptRide(new RideState.Snapshot(450,1500,100000,100000));
+        Bitmap panel=Bitmap.createBitmap(240,320,Bitmap.Config.ARGB_8888);
+        Canvas panelCanvas=new Canvas(panel);panelCanvas.drawColor(BACKGROUND);panelHud.draw(panelCanvas,240,320,100000);
+        check(panelHud.smallScreen(),"the small screen profile replaces the card stack");
+        check(panel.getPixel(0,0)!=BACKGROUND&&panel.getPixel(239,319)!=BACKGROUND,"the panel paints the whole 240 x 320 frame");
+        check(bright(panel,40,30,200,130),"the speed reading is drawn across the top block");
+        check(bright(panel,40,190,200,300),"the voltage row is drawn below the divider");
+        check(panel.getPixel(0,0)==0xff000000&&panel.getPixel(239,319)==0xff000000,"the panel backdrop is black by default");
+        panelHud.setSmallBackground(0xff224466);panelHud.draw(panelCanvas,240,320,100011);
+        check(panel.getPixel(0,0)==0xff224466,"a chosen backdrop fills the frame");
+        panelHud.setSmallBackground(0);panelHud.draw(panelCanvas,240,320,100012);
+        check(panel.getPixel(0,0)!=0xff224466,"zero hands the backdrop back to the theme");
+        panelHud.setSmallBackground(0xff000000);
+        Bitmap stretched=Bitmap.createBitmap(480,640,Bitmap.Config.ARGB_8888);
+        Canvas stretchedCanvas=new Canvas(stretched);stretchedCanvas.drawColor(BACKGROUND);panelHud.draw(stretchedCanvas,480,640,100013);
+        check(bright(stretched,100,80,400,320)&&bright(stretched,60,370,420,600),"the panel keeps its proportions on a frame twice the design size");
+        check(panelHud.touch(120,160,240,320,100000)!=null&&"block".equals(panelHud.touch(120,160,240,320,100000).getString("command")),"the panel consumes every touch inside the frame");
+        check(panelHud.touch(120,400,240,320,100000)==null&&panelHud.touch(-4,160,240,320,100000)==null,"a touch outside the frame is not consumed");
+        panelHud.setSmallColors(0xffff0000,0,0);panelHud.draw(panelCanvas,240,320,100001);
+        check(shade(panel,0xffff0000,40,30,200,140)&&!shade(panel,0xffff0000,40,180,200,319),"a custom speed colour paints the speed block and nothing below it");
+        panelHud.setSmallColors(0,0xff00ff00,0);panelHud.draw(panelCanvas,240,320,100002);
+        check(!shade(panel,0xffff0000,40,30,200,140)&&shade(panel,0xff00ff00,40,180,200,319),"the colour moved down to the first row and left the speed block");
+        panelHud.setSmallColors(0,0,0);
+        check(panelHud.smallRowColor(0)==0&&panelHud.smallRowColor(1)==0&&panelHud.smallRowColor(2)==0,"zero keeps every row on the theme's own colour");
+        panelHud.draw(panelCanvas,240,320,100003);int fromVehicle=lit(panel,40,180,200,319);
+        panelHud.setSmallSource(1);check(panelHud.smallSource()==1,"the panel is switched over to the protection board");
+        panelHud.draw(panelCanvas,240,320,100004);
+        check(lit(panel,40,180,200,319)!=fromVehicle,"reading the board instead of the vehicle changes what the panel shows");
+        panelHud.setSmallSource(9);check(panelHud.smallSource()==1,"an out of range source is clamped");
+        panelHud.setSmallSource(0);panelHud.draw(panelCanvas,240,320,100005);
+        check(panelHud.smallSource()==0&&lit(panel,40,180,200,319)==fromVehicle,"switching back restores the vehicle reading");
+        panelHud.setSmallScreen(false);
+        check(!panelHud.smallScreen(),"switching the profile off restores the card layout");
         Bitmap darkImage=android.graphics.BitmapFactory.decodeFile(args[0]);Bitmap both=Bitmap.createBitmap(848,darkImage.getHeight()+480,Bitmap.Config.ARGB_8888);
         Canvas bothCanvas=new Canvas(both);bothCanvas.drawBitmap(darkImage,0,0,null);bothCanvas.drawBitmap(lightFrame,0,darkImage.getHeight(),null);
         try(FileOutputStream out=new FileOutputStream(args[0])){both.compress(Bitmap.CompressFormat.PNG,100,out);}

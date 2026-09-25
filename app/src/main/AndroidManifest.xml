@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-sdk android:minSdkVersion="34" android:targetSdkVersion="36" />
+    <uses-sdk android:minSdkVersion="33" android:targetSdkVersion="36" />
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
@@ -36,6 +36,8 @@
         <activity android:name=".ui.BmsSettingsActivity" android:exported="false"
             android:excludeFromRecents="true" />
         <activity android:name=".ui.TouchSettingsActivity" android:exported="false"
+            android:excludeFromRecents="true" />
+        <activity android:name=".ui.ScreenProfileSettingsActivity" android:exported="false"
             android:excludeFromRecents="true" />
         <service android:name=".notification.MirrorNotificationListener" android:exported="true"
             android:label="Ninebot Enhance" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">

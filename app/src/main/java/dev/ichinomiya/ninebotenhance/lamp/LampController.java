@@ -6,26 +6,28 @@ import android.bluetooth.le.*;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.*;
-import dev.ichinomiya.ninebotenhance.core.LampSettings;
-import dev.ichinomiya.ninebotenhance.core.LampState;
-import dev.ichinomiya.ninebotenhance.core.TxLampProtocol;
+import dev.ichinomiya.ninebotenhance.core.*;
 import dev.ichinomiya.ninebotenhance.ipc.Protocol;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
 /**
- * The module's own GATT link to one TX lamp hoist, running in the module process on the module's own Bluetooth permissions; it
+ * The module's own GATT link to one lamp controller (a TX hoist, a 摩灯客 headlight ESC or canopy controller, or an SG lift; see
+ * {@link LampKind}), running in the module process on the module's own Bluetooth permissions; it
  * never touches the vehicle's link or Ninebot's Bluetooth stack. The link lives only while something holds it: a cast session
  * (every dashboard snapshot renews the hold), a visible Ninebot screen (its status poll renews it) or the lamp screen. When the
  * last hold lapses the GATT is closed and the controller goes quiet, so a lamp Ninebot is not using is free for anything else
  * and the module has nothing ticking in the background.
  * <p>
- * Only two commands are ever written: 0x11 to authenticate and 0x12 to drive to a height. The vendor application also echoes a
- * 0x13 travel configuration after each move, but its control-mode bit has no trustworthy source and sending that frame was tried
- * once and changed nothing here, so it is left alone. Height, speed and travel limits come from the device's own 0x15 frames;
- * this one never streams them while the motor runs and only answers the handshake with one, so the handshake doubles as the
- * height poll.
+ * TX: only 0x11 to authenticate and 0x12 to drive to a height are written. The vendor application also echoes a 0x13 travel
+ * configuration after each move, but its control-mode bit has no trustworthy source and sending that frame was tried once and
+ * changed nothing here, so it is left alone. Height, speed and travel limits come from the device's own 0x15 frames; this one
+ * never streams them while the motor runs and only answers the handshake with one, so the handshake doubles as the height poll.
+ * ESC: A9 as the liveness probe, then A3 direction 3 for an absolute height; the device reports nothing back, so the last target
+ * is remembered across runs. Canopy: the bare CC position command and the 0x1D query, whose answer and the pushed 0x20 frames
+ * carry the device's own position. SG: the AF session opener, then jog heartbeats every 100 ms for the configured time followed
+ * by two stop frames; it has no position, so the card only says it is connected.
  */
 public final class LampController {
     /** One hold from a dashboard snapshot or Ninebot's status poll; longer than the one second poll so a late one does not drop the link. */
@@ -55,6 +57,10 @@ public final class LampController {
     private boolean writing,ticking,authenticated,idle=true;private int authFailures;
     private final long[] holds=new long[3];
     private long retryAt,lastWriteAt,desiredAt,pollUntil;private int desired=-1;private boolean stepScheduled;
+    /** ESC only: the last height sent, remembered across runs because the device never reports one; -1 until the first move. */
+    private int tracked=-1;
+    /** SG only: the direction being jogged (0 when still) and when the current burst ends. */
+    private int jogDirection;private long jogUntil;
     /** Control mode bit of the 0x13 echo; the only field of that frame the device never tells us. */
     /** Height polls: fast while the hoist could still be running after a move, slow while a screen or session is watching. */
     private static final long POLL_DELAY_MS=1200,POLL_WINDOW_MS=20000,POLL_IDLE_MS=15000;
@@ -70,23 +76,32 @@ public final class LampController {
     private LampSettings read(){
         try{
             android.content.SharedPreferences p=context.getSharedPreferences(Protocol.MODULE+".lamp",Context.MODE_PRIVATE);
+            tracked=p.getInt("position",-1);
             return new LampSettings(p.getString("mac",""),p.getString("password",""),
                     p.getInt("speed",LampSettings.DEFAULT_SPEED),p.getInt("steps",LampSettings.DEFAULT_STEPS),
-                    p.getBoolean("reversed",false),p.getBoolean("volume_control",true));
+                    p.getBoolean("reversed",false),p.getBoolean("volume_control",true),
+                    LampKind.of(p.getInt("kind",LampKind.TX.id)),p.getInt("jog_ms",LampSettings.DEFAULT_JOG_MS));
         }catch(RuntimeException e){return LampSettings.NONE;}
     }
+    private void remember(int position){
+        tracked=position;
+        try{context.getSharedPreferences(Protocol.MODULE+".lamp",Context.MODE_PRIVATE).edit().putInt("position",position).apply();}catch(RuntimeException ignored){}
+    }
     public LampSettings settings(){return settings;}
-    /** Saving a different address or password drops the current link so the next hold authenticates afresh. */
+    /** Saving a different device, kind or password drops the current link so the next hold authenticates afresh. */
     public void save(LampSettings value){
         LampSettings previous=settings;settings=value;
+        boolean identity=!previous.mac().equals(value.mac())||!previous.password().equals(value.password())||previous.kind()!=value.kind();
         try{
-            context.getSharedPreferences(Protocol.MODULE+".lamp",Context.MODE_PRIVATE).edit()
+            android.content.SharedPreferences.Editor editor=context.getSharedPreferences(Protocol.MODULE+".lamp",Context.MODE_PRIVATE).edit()
                     .putString("mac",value.mac()).putString("password",value.password())
                     .putInt("speed",value.speed()).putInt("steps",value.steps())
-                    .putBoolean("reversed",value.reversed()).putBoolean("volume_control",value.volumeControl()).apply();
+                    .putBoolean("reversed",value.reversed()).putBoolean("volume_control",value.volumeControl())
+                    .putInt("kind",value.kind().id).putInt("jog_ms",value.jogMs());
+            if(identity)editor.remove("position");
+            editor.apply();
         }catch(RuntimeException ignored){}
-        boolean identity=!previous.mac().equals(value.mac())||!previous.password().equals(value.password());
-        worker.post(()->{if(identity){close("绑定已更改");retryAt=0;}tick();});
+        worker.post(()->{if(identity){close("绑定已更改");retryAt=0;tracked=-1;}tick();});
     }
     public LampState state(){return state;}
     public void watch(Consumer<LampState> watcher){watchers.add(watcher);main.post(()->watcher.accept(state));}
@@ -152,13 +167,13 @@ public final class LampController {
      */
     private final Runnable authTimeout=new Runnable(){@Override public void run(){
         if(gatt==null||authenticated)return;
-        authFailures++;close("密码无应答");
+        authFailures++;close(settings.kind()==LampKind.TX?"密码无应答":"握手无应答");
         retryAt=SystemClock.elapsedRealtime()+Math.min(AUTH_BACKOFF_MAX_MS,RETRY_MS*authFailures);
     }};
     /** Tear the GATT down without saying anything about it; the callers decide what state that leaves. */
     private void drop(){
-        worker.removeCallbacks(authTimeout);worker.removeCallbacks(statusPoll);worker.removeCallbacks(writeWatchdog);
-        BluetoothGatt open=gatt;gatt=null;writeCharacteristic=null;writing=false;authenticated=false;queue.clear();desired=-1;
+        worker.removeCallbacks(authTimeout);worker.removeCallbacks(statusPoll);worker.removeCallbacks(writeWatchdog);worker.removeCallbacks(jogPulse);
+        BluetoothGatt open=gatt;gatt=null;writeCharacteristic=null;writing=false;authenticated=false;queue.clear();desired=-1;jogDirection=0;
         if(open!=null)try{open.disconnect();open.close();}catch(RuntimeException ignored){}
     }
     private void close(String detail){
@@ -191,16 +206,23 @@ public final class LampController {
         if(!writing)return;
         log("write callback missing, queue="+queue.size());writing=false;drain();
     }};
+    /** Whether the advertisement lists the service, which is all the 摩灯客 controllers identify themselves by. */
+    private static boolean advertises(ScanRecord record,String service){
+        if(record==null)return false;
+        List<android.os.ParcelUuid> uuids=record.getServiceUuids();if(uuids==null)return false;
+        for(android.os.ParcelUuid uuid:uuids)if(uuid.getUuid().toString().equalsIgnoreCase(service))return true;
+        return false;
+    }
     private static String hex(byte[] data){
         StringBuilder text=new StringBuilder();
         for(byte value:data)text.append(String.format(Locale.ROOT,"%02X",value));
         return text.toString();
     }
-    /** Drive the hoist to an absolute height, kept inside the travel limits the device reported. */
+    /** Drive a positional device to an absolute height, kept inside the travel limits the device reported. */
     public void moveTo(int position){
         worker.post(()->{
             LampSettings current=settings;LampState now=state;
-            if(!now.ready())return;
+            if(!now.ready()||!current.kind().positional)return;
             int target=TxLampProtocol.clampPosition(position,now.lowLimit(),now.highLimit());
             desired=target;desiredAt=SystemClock.elapsedRealtime();
             move(target);
@@ -210,19 +232,24 @@ public final class LampController {
      * One volume key press. Returns whether the lamp took it: the caller restores the phone volume only when it did, so a press
      * either changes the volume or moves the lamp, never both. Presses land on the running target rather than on the last report,
      * so holding the key walks the hoist one notch at a time instead of repeating one step. {@code up} always brightens the light;
-     * with the binding reversed that is the low end of the device travel, so the raw target moves the other way.
+     * with the binding reversed that is the low end of the device travel, so the raw target moves the other way. A timed lift
+     * instead runs for the configured time in that direction; a press during the run extends it.
      */
     public boolean stepFromVolume(boolean up){
         LampSettings current=settings;LampState now=state;
-        if(!current.volumeControl()||!current.bound()||!now.knownPosition())return false;
+        if(!current.volumeControl()||!current.bound()||!now.ready())return false;
+        boolean deviceUp=up^current.reversed();
+        if(!current.kind().positional){worker.post(()->jog(deviceUp));return true;}
+        // The ESC never reports a height: before the first move the middle of the travel is taken as the starting point.
+        if(!now.knownPosition()&&current.kind()!=LampKind.ESC)return false;
         worker.post(()->{
-            LampState live=state;if(!live.knownPosition())return;
+            LampState live=state;if(!live.ready())return;
             long at=SystemClock.elapsedRealtime();
-            int from=desired>=0&&at-desiredAt<=TARGET_MEMORY_MS?desired:live.position();
-            int delta=current.stepUnits(live.lowLimit(),live.highLimit());boolean deviceUp=up^current.reversed();
-            int lo=Math.max(TxLampProtocol.MIN_POSITION,live.lowLimit()),hi=live.highLimit();
-            if(lo>hi){lo=TxLampProtocol.MIN_POSITION;hi=TxLampProtocol.MAX_POSITION;}
-            hi=LampSettings.topLimit(lo,hi);
+            int lo=Math.max(TxLampProtocol.MIN_POSITION,live.lowLimit()),hi=Math.min(current.kind().maxPosition,live.highLimit());
+            if(lo>hi){lo=TxLampProtocol.MIN_POSITION;hi=current.kind().maxPosition;}
+            int from=desired>=0&&at-desiredAt<=TARGET_MEMORY_MS?desired:live.knownPosition()?live.position():(lo+hi)/2;
+            int delta=current.stepUnits(lo,hi);
+            hi=current.top(lo,hi);
             desired=Math.max(lo,Math.min(hi,from+(deviceUp?delta:-delta)));
             desiredAt=at;
             long wait=Math.max(0,STEP_INTERVAL_MS-(at-lastWriteAt));
@@ -238,25 +265,59 @@ public final class LampController {
         move(desired);
     }
     /**
-     * The height command, followed by the travel configuration the device itself last reported. The vendor application always
-     * sends that pair and this device only streams its 0x15 position reports when it gets it; every field but the control mode
-     * bit is echoed straight back from the device's own 0x14 and 0x15 frames, so nothing is invented here.
+     * The height command of a positional device. TX: 0x12 alone; the vendor application also sends a 0x13 travel configuration
+     * but nothing is invented here. ESC: A3 with the absolute target, which is then remembered as the position since the device
+     * never reports one. Canopy: the bare CC command, followed by a query so the card shows where the device says it is.
      */
     private void move(int target){
-        enqueue(TxLampProtocol.moveTo(target,settings.protocolSpeed()));
-        poll(POLL_WINDOW_MS);
+        LampSettings current=settings;
+        switch(current.kind()){
+            case TX->{enqueue(TxLampProtocol.moveTo(target,current.protocolSpeed()));poll(POLL_WINDOW_MS);}
+            case ESC->{enqueue(EscLampProtocol.moveTo(current.password(),target));remember(target);publish(state.withPosition(target,-1,EscLampProtocol.MIN_POSITION,EscLampProtocol.MAX_POSITION));}
+            case CANOPY->{enqueue(CanopyLampProtocol.moveTo(target));poll(POLL_WINDOW_MS);}
+            default->{}
+        }
     }
+    /** One press of a timed lift: jog heartbeats in that direction until the burst ends, then stop. A press mid-burst extends it. */
+    private void jog(boolean deviceUp){
+        LampSettings current=settings;
+        if(gatt==null||!authenticated||current.kind().positional)return;
+        int direction=deviceUp?SgLampProtocol.DIR_ONE:SgLampProtocol.DIR_TWO;
+        if(jogDirection!=0&&jogDirection!=direction)enqueue(SgLampProtocol.stop());
+        jogDirection=direction;jogUntil=SystemClock.elapsedRealtime()+current.jogMs();
+        log("jog "+(deviceUp?"up":"down")+" "+current.jogMs()+" ms pwm="+current.pwm());
+        worker.removeCallbacks(jogPulse);jogPulse.run();
+    }
+    private final Runnable jogPulse=new Runnable(){@Override public void run(){
+        if(gatt==null||!authenticated||jogDirection==0){jogDirection=0;return;}
+        if(SystemClock.elapsedRealtime()>=jogUntil){
+            // The device has no receipt for a stop, so it is sent twice as the vendor notes advise.
+            jogDirection=0;enqueue(SgLampProtocol.stop());enqueue(SgLampProtocol.stop());log("jog stop");return;
+        }
+        enqueue(SgLampProtocol.jog(jogDirection,settings.pwm()));
+        worker.postDelayed(this,SgLampProtocol.HEARTBEAT_MS);
+    }};
     /**
-     * Ask the device where it is. It answers the handshake with its 0x15 position frame and streams nothing on its own while the
-     * motor runs, so re-sending the handshake is the only way to read a height back; it changes nothing on the device.
+     * Ask the device where it is. The TX hoist answers the handshake with its 0x15 position frame and streams nothing on its own
+     * while the motor runs, so re-sending the handshake is the only way to read a height back; the canopy answers the 0x1D query
+     * with its position. Neither changes anything on the device. The ESC and SG have nothing to ask.
      */
     private void poll(long window){
+        if(query(settings)==null)return;
         pollUntil=Math.max(pollUntil,SystemClock.elapsedRealtime()+window);
         worker.removeCallbacks(statusPoll);worker.postDelayed(statusPoll,POLL_DELAY_MS);
     }
+    private static byte[] query(LampSettings current){
+        return switch(current.kind()){
+            case TX->TxLampProtocol.auth(current.password());
+            case CANOPY->CanopyLampProtocol.queryConfig();
+            default->null;
+        };
+    }
     private final Runnable statusPoll=new Runnable(){@Override public void run(){
         if(gatt==null||!authenticated)return;
-        enqueue(TxLampProtocol.auth(settings.password()));
+        byte[] frame=query(settings);if(frame==null)return;
+        enqueue(frame);
         long now=SystemClock.elapsedRealtime();boolean moving=now<pollUntil,watched=now<heldUntil();
         // Re-arming is driven by these two clocks alone; the answer to a poll must never schedule the next one.
         if(moving||watched)worker.postDelayed(this,moving?POLL_DELAY_MS:POLL_IDLE_MS);
@@ -280,11 +341,11 @@ public final class LampController {
         @Override public void onServicesDiscovered(BluetoothGatt g,int status){
             worker.post(()->{
                 if(g!=gatt)return;
-                BluetoothGattService service=null;
-                try{service=g.getService(UUID.fromString(TxLampProtocol.SERVICE));}catch(RuntimeException ignored){}
+                LampKind kind=settings.kind();BluetoothGattService service=null;
+                try{service=g.getService(UUID.fromString(kind.service));}catch(RuntimeException ignored){}
                 if(service==null){close("未找到灯控服务");return;}
-                writeCharacteristic=service.getCharacteristic(UUID.fromString(TxLampProtocol.CHAR_WRITE));
-                BluetoothGattCharacteristic notify=service.getCharacteristic(UUID.fromString(TxLampProtocol.CHAR_NOTIFY));
+                writeCharacteristic=service.getCharacteristic(UUID.fromString(kind.write));
+                BluetoothGattCharacteristic notify=kind.singleCharacteristic()?writeCharacteristic:service.getCharacteristic(UUID.fromString(kind.notify));
                 if(writeCharacteristic==null||notify==null){close("灯控特征缺失");return;}
                 log("characteristics write=0x"+Integer.toHexString(writeCharacteristic.getProperties())+" notify=0x"+Integer.toHexString(notify.getProperties()));
                 try{
@@ -301,7 +362,7 @@ public final class LampController {
                 if(g!=gatt)return;
                 log("cccd written status="+status);
                 if(status!=BluetoothGatt.GATT_SUCCESS){close("通知订阅失败 "+status);return;}
-                enqueue(TxLampProtocol.auth(settings.password()));
+                handshake();
             });
         }
         @Override public void onCharacteristicWrite(BluetoothGatt g,BluetoothGattCharacteristic ch,int status){
@@ -311,36 +372,77 @@ public final class LampController {
             worker.post(()->{if(g==gatt)received(value);});
         }
     };
+    /**
+     * The first exchange after subscribing. TX: the password handshake, which the device only answers when it is right. ESC: the
+     * firmware query, answered by B9; the password is only judged by the receipt of the first move. Canopy: the configuration
+     * query, answered with the position. SG: the session opener, answered with an AF status frame.
+     */
+    private void handshake(){
+        LampSettings current=settings;
+        switch(current.kind()){
+            case TX->enqueue(TxLampProtocol.auth(current.password()));
+            case ESC->enqueue(EscLampProtocol.query());
+            case CANOPY->enqueue(CanopyLampProtocol.queryConfig());
+            case SG->enqueue(SgLampProtocol.init());
+        }
+    }
+    /** The device answered the handshake: the link is usable. */
+    private void ready(){
+        boolean first=!authenticated;
+        authenticated=true;authFailures=0;worker.removeCallbacks(authTimeout);retryAt=0;
+        publish(state.withPhase(LampState.READY,""));
+        if(!first)return;
+        if(settings.kind()==LampKind.ESC&&tracked>=0)publish(state.withPosition(tracked,-1,EscLampProtocol.MIN_POSITION,EscLampProtocol.MAX_POSITION));
+        if(held())poll(0);
+    }
     private void received(byte[] value){
         log("recv "+hex(value));
+        switch(settings.kind()){
+            case TX->receivedTx(value);
+            case ESC->{
+                EscLampProtocol.Response response=EscLampProtocol.parse(value);
+                if(response==null)return;
+                if(response.type()==EscLampProtocol.TYPE_INFO)ready();
+                else if(EscLampProtocol.receipt(response,EscLampProtocol.TYPE_MOVE)&&!EscLampProtocol.accepted(response,EscLampProtocol.TYPE_MOVE)){
+                    authenticated=false;log("password rejected");publish(LampState.of(LampState.REJECTED,""));close("");
+                }
+            }
+            case CANOPY->{
+                int position=CanopyLampProtocol.position(value);
+                if(position<0)return;
+                ready();publish(state.withPosition(position,-1,CanopyLampProtocol.MIN_POSITION,CanopyLampProtocol.MAX_POSITION));
+            }
+            case SG->{
+                if(SgLampProtocol.connected(value))ready();
+                else if(SgLampProtocol.alarm(value))log("motor stalled");
+                else{int motor=SgLampProtocol.motor(value);if(motor>=0)log("motor "+(motor==0?"stopped":"running "+motor));}
+            }
+        }
+    }
+    private void receivedTx(byte[] value){
         int command=TxLampProtocol.command(value);
         if(command==TxLampProtocol.CMD_AUTH||command==TxLampProtocol.CMD_PASSWORD){
-            if(TxLampProtocol.accepted(value)){
-                boolean first=!authenticated;
-                authenticated=true;authFailures=0;worker.removeCallbacks(authTimeout);retryAt=0;
-                publish(state.withPhase(LampState.READY,""));
-                if(first&&held())poll(0);
-            }else{authenticated=false;log("password rejected");publish(LampState.of(LampState.REJECTED,""));close("");}
+            if(TxLampProtocol.accepted(value))ready();
+            else{authenticated=false;log("password rejected");publish(LampState.of(LampState.REJECTED,""));close("");}
             return;
         }
         TxLampProtocol.Report report=TxLampProtocol.parse(value);
         if(report==null||!authenticated)return;
         if(report.state())publish(state.withPosition(report.position(),report.speed(),report.low(),report.high()));
-
     }
     // ---------------------------------------------------------------- scanning
-    /** One advertiser; {@code matched} marks the ones whose name looks like a lamp controller. */
+    /** One advertiser; {@code matched} marks the ones that look like the kind of controller being looked for. */
     public record Found(String mac,String name,int rssi,boolean matched){}
     /** Everything one scan saw, plus the framework's failure code (0 when the scan actually ran). */
     public record Scan(List<Found> devices,int failure){}
     public static final int SCAN_UNAVAILABLE=-1;
     /**
      * Collect nearby BLE devices for the given time; the result lands on the main thread. Every advertiser is returned with the
-     * MOTORE-named ones flagged and listed first, so a controller with an unexpected name can still be picked by address. Low
+     * ones matching the kind flagged and listed first, so a controller with an unexpected name can still be picked by address. Low
      * latency mode with aggressive matching: the default low power duty cycle leaves the radio off most of the time and can miss
      * a slow advertiser completely within a few seconds.
      */
-    public void scan(long millis,Consumer<Scan> done){
+    public void scan(LampKind kind,long millis,Consumer<Scan> done){
         BluetoothAdapter adapter=adapter();
         if(adapter==null||!adapter.isEnabled()||!scanPermitted()){main.post(()->done.accept(new Scan(List.of(),SCAN_UNAVAILABLE)));return;}
         BluetoothLeScanner scanner;
@@ -358,7 +460,7 @@ public final class LampController {
                 if(name==null||name.isEmpty()){ScanRecord advertised=result.getScanRecord();name=advertised==null?null:advertised.getDeviceName();}
                 String mac=result.getDevice().getAddress();if(mac==null)return;
                 String label=name==null?"":name;
-                boolean matched=TxLampProtocol.lampName(label);
+                boolean matched=kind.matches(label,advertises(result.getScanRecord(),kind.service));
                 synchronized(found){
                     // A later advertisement without a name must not overwrite one that carried it.
                     Found previous=found.get(mac);

@@ -5,11 +5,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 
-/** In-process read-only pack voltage, isolated by vehicle. Times describe receipt, not BMS sampling. */
+/** In-process read-only pack voltage and dashboard charge level, isolated by vehicle. Times describe receipt, not sampling. */
 public final class BatteryTelemetry {
     public enum Source { BLUETOOTH, SERVER }
     public record Value(float number,long wallTime,long elapsedTime,Source source) {}
-    public record Snapshot(Value voltage) {}
+    public record Snapshot(Value voltage,Value percent) {}
     /**
      * Verified 6.10.10 command names for the M5P (model 14103) configuration. Lithium packs sit in up to three bays
      * (bms1/bms2/bms3, register 26 each: rVoltage, rVoltage2, rVoltage3); the Ninebot battery page first reads the
@@ -55,7 +55,7 @@ public final class BatteryTelemetry {
         return names;
     }
     public static boolean displayRegister(String tag){return VRLA_VOLTAGE_COMMAND.equals(tag);}
-    public static final Snapshot EMPTY=new Snapshot(null);
+    public static final Snapshot EMPTY=new Snapshot(null,null);
     private final LinkedHashMap<String,Snapshot> vehicles=new LinkedHashMap<>();
     private String selected="",pinned="";private boolean session;
 
@@ -67,12 +67,34 @@ public final class BatteryTelemetry {
     public synchronized boolean update(String key,Float voltage,Source source,long wall,long elapsed){
         if(key==null||key.isEmpty()||voltage==null||!Float.isFinite(voltage)||source==null||wall<=0||elapsed<0)return false;
         Snapshot previous=vehicles.getOrDefault(key,EMPTY);
-        Snapshot next=new Snapshot(merge(previous.voltage(),voltage,source,wall,elapsed));
+        Snapshot next=new Snapshot(merge(previous.voltage(),voltage,source,wall,elapsed),previous.percent());
         if(next.equals(previous))return false;
         vehicles.put(key,next);
-        if(vehicles.size()>8){for(String candidate:vehicles.keySet().toArray(new String[0]))if(!candidate.equals(selected)&&!candidate.equals(pinned)&&!candidate.equals(key)){vehicles.remove(candidate);break;}}
+        trim(key);
         return true;
     }
+    /** The dashboard charge level; 0-100 only, anything else is refused. */
+    public synchronized boolean updatePercent(String key,Integer percent,Source source,long wall,long elapsed){
+        if(key==null||key.isEmpty()||percent==null||percent<0||percent>100||source==null||wall<=0||elapsed<0)return false;
+        Snapshot previous=vehicles.getOrDefault(key,EMPTY);
+        Snapshot next=new Snapshot(previous.voltage(),merge(previous.percent(),percent.floatValue(),source,wall,elapsed));
+        if(next.equals(previous))return false;
+        vehicles.put(key,next);
+        trim(key);
+        return true;
+    }
+    private void trim(String key){
+        if(vehicles.size()>8){for(String candidate:vehicles.keySet().toArray(new String[0]))if(!candidate.equals(selected)&&!candidate.equals(pinned)&&!candidate.equals(key)){vehicles.remove(candidate);break;}}
+    }
+    /** The dashboard level register (dis/181) carries one little-endian whole percent. */
+    public static Integer decodeLevel(String tag,byte[] data){
+        if(!levelRecognized(tag)||data==null||data.length<2)return null;
+        int percent=u16(data,0);
+        return percent<=100?percent:null;
+    }
+    public static boolean levelRecognized(String tag){return DASH_LEVEL_COMMAND.equals(tag);}
+    /** The charge level as text; "--" while unknown or stale. */
+    public static String level(Value value){return value==null?"--":Math.round(value.number())+"%";}
     private static Value merge(Value old,float number,Source source,long wall,long elapsed){
         if(old!=null){
             if(elapsed<old.elapsedTime())return old;

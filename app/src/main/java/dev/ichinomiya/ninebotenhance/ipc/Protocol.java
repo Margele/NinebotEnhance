@@ -1,8 +1,8 @@
 package dev.ichinomiya.ninebotenhance.ipc;
 
 public final class Protocol {
-    public static final String VERSION = "1.1.9";
-    public static final int VERSION_CODE = 47;
+    public static final String VERSION = "1.1.14";
+    public static final int VERSION_CODE = 52;
     public static final String DISPLAY_NAME = "Ninebot Enhance Display";
     public static final String DAEMON_CLASS = "dev.ichinomiya.ninebotenhance.display.RootDisplayMain";
     public static final String MODULE = "dev.ichinomiya.ninebotenhance", TARGET = "cn.ninebot.ninebot";
@@ -34,6 +34,8 @@ public final class Protocol {
     public static final int OWNER_TOUCH_MARKS = 40, OWNER_TOUCH_SAMPLE = 41;
     /** The host asks for the module's cached GitHub release lookup; a stale cache starts a fresh one. */
     public static final int UPDATE_CHECK = 42;
+    /** The screen profile page: five-inch dashboard or the 2.4 inch 240 x 320 panel, plus the HUD default-font switch. */
+    public static final int SCREEN_PROFILE_SETTINGS = 43;
     public static final String APP_RECOVERY = "appRecovery", APP_RECOVERY_DETAIL = "appRecoveryDetail";
     public static final String APP_LAYOUT_POLICY = "appLayoutPolicy";
     public static boolean validRequest(String value) { return value != null && value.matches("[a-f0-9]{32}"); }

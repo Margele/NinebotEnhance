@@ -531,11 +531,13 @@ public final class DirectCastController implements Application.ActivityLifecycle
         statistics.setOnClickListener(v->StatisticsDialog.show(activity,frames,card));
         Button widgets=new Button(activity);widgets.setText("控件管理");theme.button(widgets,null);
         Button encoder=new Button(activity);encoder.setText("设置覆盖");theme.button(encoder,null);
+        Button screen=new Button(activity);screen.setText("屏幕规格");theme.button(screen,null);
         Button hidden=new Button(activity);hidden.setText("隐藏功能");theme.button(hidden,null);
         Button touch=new Button(activity);touch.setText("触摸屏管理");theme.button(touch,null);
-        buttonRow(activity, layout, 12, new Button[]{widgets, encoder, hidden, touch});
+        buttonRow(activity, layout, 12, new Button[]{widgets, encoder, screen, hidden, touch});
         widgets.setOnClickListener(v->WidgetSettingsDialog.show(activity,frames,card));
         encoder.setOnClickListener(v->EncoderOverrideDialog.show(activity,frames,card,!session.displayRunning()));
+        screen.setOnClickListener(v->frames.screenProfileSettings(activity,theme.dark));
         hidden.setOnClickListener(v->HiddenFeatureDialog.show(activity,frames,card));
         touch.setOnClickListener(v->frames.touchSettings(activity,theme.dark));
         TextView appLabel = new TextView(activity); appLabel.setText("启动应用"); appLabel.setTextColor(theme.secondary); appLabel.setPadding(0, pad / 2, 0, pad / 3); layout.addView(appLabel);
@@ -613,9 +615,10 @@ public final class DirectCastController implements Application.ActivityLifecycle
                 appPicker.setEnabled(idle);
                 width.setEnabled(idle);height.setEnabled(idle);dpi.setEnabled(idle);virtualWidth.setEnabled(idle);virtualHeight.setEnabled(idle);topColor.setEnabled(idle);lightColor.setEnabled(idle);keepDpi.setEnabled(idle);
                 showMode.run();
+                boolean small = frames.screenProfileSmall();
                 connection.setText(!frames.cachedPrivilege().usesVirtualDisplay() ? "当前方式：无（投屏）。\n开始时通过系统窗口选择单个应用或整个屏幕。"
                         : "已读取: 整帧 "+value.width+" × "+value.height+"，虚拟屏 "+value.virtualWidth+" × "+value.virtualHeight+"，"+value.dpi+" DPI"+(value.keepPhoneDpi?"，保持手机 DPI":"")+"。"+(edited?"\n保留你刚输入的内容。":"")
-                        + (apps.size() == 1 ? "\n请选择启动应用并允许读取应用列表。" : selectedIndex == 0
+                        + (small ? "" : apps.size() == 1 ? "\n请选择启动应用并允许读取应用列表。" : selectedIndex == 0
                             ? (selected.isEmpty() ? "\n请先选择启动应用。" : "\n原应用入口已不可用，请重新选择。") : "")
                         + (idle ? "" : "\n请先关闭虚拟显示器再修改。")
                         + (frames.compatibility().isEmpty() ? "" : "\n" + frames.compatibility()));
@@ -648,8 +651,10 @@ public final class DirectCastController implements Application.ActivityLifecycle
             if (session.displayRunning()) { toast(activity, "请先关闭虚拟显示器再修改设置"); return; }
             if (!frames.cachedPrivilege().usesVirtualDisplay()) { dialog.dismiss(); return; }
             int index = appPicker.getSelectedItemPosition();
-            if (index <= 0 || index >= apps.size()) { toast(activity, "请先选择启动应用"); return; }
-            String selected = apps.get(index).getString("component");
+            // The 2.4 inch screen profile draws its own HUD, so the launcher choice is optional there.
+            boolean noApp = index <= 0 || index >= apps.size();
+            if (noApp && !frames.screenProfileSmall()) { toast(activity, "请先选择启动应用"); return; }
+            String selected = noApp ? "" : apps.get(index).getString("component");
             try {
                 // Display parameters are edited in the override dialog; this save keeps the stored ones inside the current frame.
                 DisplaySettings next = (loadedValue[0] == null ? cached : loadedValue[0]).withFrame(frames.frameWidth(), frames.frameHeight());
@@ -657,7 +662,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
                 width.setEnabled(false);height.setEnabled(false);dpi.setEnabled(false);virtualWidth.setEnabled(false);virtualHeight.setEnabled(false);topColor.setEnabled(false);lightColor.setEnabled(false);keepDpi.setEnabled(false);connection.setText("正在保存…");
                 frames.saveSettings(next, selected, error -> {
                     if (!usable(activity) || !dialog.isShowing()) return;
-                    if (error == null) { dialog.dismiss(); toast(activity, "启动应用和显示参数已保存"); }
+                    if (error == null) { dialog.dismiss(); toast(activity, noApp ? "显示参数已保存" : "启动应用和显示参数已保存"); }
                     else {
                         loaded[0] = false;
                         width.setEnabled(true);height.setEnabled(true);dpi.setEnabled(true);virtualWidth.setEnabled(true);virtualHeight.setEnabled(true);topColor.setEnabled(true);lightColor.setEnabled(true);keepDpi.setEnabled(true);

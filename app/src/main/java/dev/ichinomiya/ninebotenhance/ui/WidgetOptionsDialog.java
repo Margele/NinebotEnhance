@@ -16,8 +16,9 @@ public final class WidgetOptionsDialog {
     public record Slider(String label,int min,int max,int value,Describe describe){}
     public interface Apply{WidgetSettings apply(WidgetSettings current,int mask,int[] sliders);}
     private static final Describe SECONDS=v->v+" 秒";
-    /** Read-interval sliders move in half-second steps. */
+    /** Read-interval sliders move in half-second steps; the speed one moves in tenths of a second. */
     private static final Describe HALF_SECONDS=v->(v%2==0?String.valueOf(v/2):v/2+".5")+" 秒";
+    private static final Describe TENTHS=v->String.format(java.util.Locale.ROOT,"%.1f 秒",v/1000f);
     private static final int STEP=WidgetSettings.READ_STEP_MS,MIN_STEPS=WidgetSettings.MIN_READ_MS/STEP,MAX_STEPS=WidgetSettings.MAX_READ_MS/STEP;
     public static void tyres(Activity activity,FrameClient frames,View reference){
         show(activity,frames,reference,"胎压",
@@ -56,9 +57,10 @@ public final class WidgetOptionsDialog {
         show(activity,frames,reference,"数据读取设置",List.of(),
                 List.of(new Slider("胎压读取间隔",WidgetSettings.MIN_TYRE_SECONDS,WidgetSettings.MAX_TYRE_SECONDS,s.tyreIntervalSeconds(),SECONDS),
                         new Slider("电压读取间隔",MIN_STEPS,MAX_STEPS,s.voltageIntervalMs()/STEP,HALF_SECONDS),
-                        new Slider("速度读取间隔",MIN_STEPS,MAX_STEPS,s.speedIntervalMs()/STEP,HALF_SECONDS),
+                        new Slider("速度读取间隔",WidgetSettings.speedSteps(WidgetSettings.MIN_SPEED_READ_MS),WidgetSettings.speedSteps(WidgetSettings.MAX_READ_MS),
+                                WidgetSettings.speedSteps(s.speedIntervalMs()),v->TENTHS.of(WidgetSettings.speedFromSteps(v))),
                         new Slider("功率读取间隔",MIN_STEPS,MAX_STEPS,s.powerIntervalMs()/STEP,HALF_SECONDS)),
-                (current,mask,values)->current.withMask(mask).readIntervals(values[0],values[1]*STEP,values[2]*STEP,values[3]*STEP));
+                (current,mask,values)->current.withMask(mask).readIntervals(values[0],values[1]*STEP,WidgetSettings.speedFromSteps(values[2]),values[3]*STEP));
     }
     public static void show(Activity activity,FrameClient frames,View reference,String heading,List<Option> options,List<Slider> sliders,Apply apply){
         MirrorUi theme=new MirrorUi(activity,reference);WidgetSettings settings=frames.widgetSettings();
