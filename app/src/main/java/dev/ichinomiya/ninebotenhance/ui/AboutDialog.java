@@ -77,10 +77,10 @@ public final class AboutDialog {
             boolean fresh = result.getLong("checked_at") >= started, failed = result.getLong("failed_at") >= started;
             if (!fresh && !failed && attempt < 10) { button.postDelayed(() -> checkUpdate(activity, theme, frames, button, started, false, attempt + 1), 1000); return; }
             button.setEnabled(true); button.setText("检查更新");
-            if (!fresh) { Toast.makeText(activity, "检查更新失败", Toast.LENGTH_SHORT).show(); return; }
+            if (!fresh) { ErrorDialog.show(activity, null, "检查更新失败", "模块没有在 10 秒内拿到 GitHub 的回答。"); return; }
             if (result.getBoolean("newer")) UpdateDialog.show(activity, theme, result.getString("latest", ""), result.getString("url", dev.ichinomiya.ninebotenhance.core.UpdateCheck.RELEASES_URL));
             else Toast.makeText(activity, "已是最新版本 " + Protocol.VERSION, Toast.LENGTH_SHORT).show();
-        }, error -> { button.setEnabled(true); button.setText("检查更新"); Toast.makeText(activity, "检查更新失败", Toast.LENGTH_SHORT).show(); });
+        }, error -> { button.setEnabled(true); button.setText("检查更新"); ErrorDialog.show(activity, null, "检查更新失败", error); });
     }
     private static void resourceButton(Activity activity, MirrorUi theme, LinearLayout content, String label, String resource) {
         Button button = new Button(activity); button.setText(label); theme.button(button, null);
@@ -89,7 +89,7 @@ public final class AboutDialog {
         content.addView(button, params);
         button.setOnClickListener(v -> {
             try { DialogContent.document(activity, theme, label, ModuleResources.text(resource)); }
-            catch (IOException | RuntimeException e) { Toast.makeText(activity, "无法读取：" + e.getMessage(), Toast.LENGTH_LONG).show(); }
+            catch (IOException | RuntimeException e) { ErrorDialog.show(activity, null, "无法读取 " + label, String.valueOf(e.getMessage())); }
         });
     }
     private AboutDialog() {}

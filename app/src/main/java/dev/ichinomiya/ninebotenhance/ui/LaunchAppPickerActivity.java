@@ -64,7 +64,7 @@ public final class LaunchAppPickerActivity extends Activity {
         actions.addView(permission,first); actions.addView(refresh,new LinearLayout.LayoutParams(0,-2,1)); root.addView(actions);
         permission.setOnClickListener(v -> {
             try { returningFromSettings=true; startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:"+getPackageName()))); }
-            catch (RuntimeException e) { returningFromSettings=false; Toast.makeText(this,"请在系统应用权限中允许 Ninebot Enhance 读取应用列表",Toast.LENGTH_LONG).show(); }
+            catch (RuntimeException e) { returningFromSettings=false; ErrorDialog.show(this,null,"无法打开应用信息页","请在系统应用权限中允许 Ninebot Enhance 读取应用列表。\n"+dev.ichinomiya.ninebotenhance.ipc.Ipc.error(e)); }
         });
         refresh.setOnClickListener(v -> { focusRetries=1; loadApps(); });
         expand = button("显示全部应用"); LinearLayout.LayoutParams expandParams = new LinearLayout.LayoutParams(-1,-2); expandParams.topMargin=gap;

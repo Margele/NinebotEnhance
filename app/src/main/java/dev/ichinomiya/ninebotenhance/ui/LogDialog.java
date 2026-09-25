@@ -41,7 +41,7 @@ final class LogDialog {
     }
     private static void failure(Activity activity, FrameClient frames, String message) {
         frames.report("LOG_EXPORT " + message);
-        Toast.makeText(activity, "无法分享日志：" + message, Toast.LENGTH_LONG).show();
+        ErrorDialog.show(activity, null, "无法分享日志", message);
     }
     private LogDialog() {}
 }

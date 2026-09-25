@@ -92,7 +92,7 @@ public final class SetupGuideActivity extends Activity {
     private void advance() {
         if (step == STEP_SOURCE) {
             try { PrivilegeManager.save(this, source.name(), mode.name()); PrivilegeManager.saveKeepRoot(this, keepRoot); }
-            catch (RuntimeException e) { Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show(); return; }
+            catch (RuntimeException e) { ErrorDialog.show(this, null, "保存失败", String.valueOf(e.getMessage())); return; }
         }
         if (step == STEP_BMS) {
             BmsController bms = BmsController.get(this); BmsSettings current = bms.settings();
@@ -154,7 +154,7 @@ public final class SetupGuideActivity extends Activity {
         grant.setOnClickListener(v -> {
             try {
                 if (mode == PrivilegeMode.SHIZUKU) PrivilegeManager.requestPermission(); else RootAuthorization.request(this);
-            } catch (RuntimeException e) { Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show(); }
+            } catch (RuntimeException e) { ErrorDialog.show(this, null, "申请授权失败", String.valueOf(e.getMessage())); }
             main.postDelayed(refresh, 1500);
         });
         pollPrivilege.run();

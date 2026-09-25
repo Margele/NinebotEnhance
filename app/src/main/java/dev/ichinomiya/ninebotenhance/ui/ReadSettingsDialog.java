@@ -51,7 +51,7 @@ public final class ReadSettingsDialog {
                     .with(WidgetSettings.VOLTAGE_FROM_BMS, fromBms).with(WidgetSettings.POWER_FROM_BMS, fromBms);
             frames.saveWidgetSettings(next);
             Bundle args = new Bundle(); args.putBoolean("save", true); args.putBoolean("bms_prefer", fromBms); args.putInt("bms_poll_ms", poll.getProgress() * BMS_STEP);
-            frames.bmsConfig(args, result -> {}, error -> { if (!activity.isDestroyed()) Toast.makeText(activity, error, Toast.LENGTH_LONG).show(); });
+            frames.bmsConfig(args, result -> {}, error -> ErrorDialog.show(activity, reference, "保存失败", error));
             dialog.dismiss();
         });
     }

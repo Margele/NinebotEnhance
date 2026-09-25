@@ -15,7 +15,7 @@ final class UpdateDialog {
     }
     static void open(Activity activity, String url) {
         try { activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); }
-        catch (RuntimeException e) { Toast.makeText(activity, "没有可打开链接的应用", Toast.LENGTH_SHORT).show(); }
+        catch (RuntimeException e) { ErrorDialog.show(activity, null, "没有可打开链接的应用", url); }
     }
     private UpdateDialog() {}
 }

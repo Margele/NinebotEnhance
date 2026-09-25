@@ -88,7 +88,7 @@ final class PermissionRows {
         try {
             if (mode == PrivilegeMode.SHIZUKU) PrivilegeManager.requestPermission();
             else RootAuthorization.request(activity);
-        } catch (RuntimeException e) { Toast.makeText(activity, e.getMessage(), Toast.LENGTH_LONG).show(); }
+        } catch (RuntimeException e) { ErrorDialog.show(activity, null, "申请授权失败", String.valueOf(e.getMessage())); }
         main.postDelayed(refresh, 1500);
     }
     private void touchRow() {

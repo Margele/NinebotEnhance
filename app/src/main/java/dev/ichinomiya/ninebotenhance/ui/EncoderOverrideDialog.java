@@ -95,8 +95,8 @@ public final class EncoderOverrideDialog {
             try{
                 next=new DisplaySettings(base.width,base.height,over?number(virtualWidth):base.virtualWidth,over?number(virtualHeight):base.virtualHeight,over?number(dpi):base.dpi,
                         dark.color(),keepDpi.isChecked(),light.color(),over,0,compat.isChecked()&&keepDpi.isChecked());
-            }catch(IllegalArgumentException e){Toast.makeText(activity,e.getMessage(),Toast.LENGTH_LONG).show();return;}
-            frames.saveSettings(next,frames.cachedApp(),error->{if(error!=null&&!activity.isDestroyed())Toast.makeText(activity,error,Toast.LENGTH_LONG).show();});
+            }catch(IllegalArgumentException e){ErrorDialog.show(activity,reference,e.getMessage());return;}
+            frames.saveSettings(next,frames.cachedApp(),error->{if(error!=null)ErrorDialog.show(activity,reference,"保存失败",error);});
             dialog.dismiss();
         });
     }

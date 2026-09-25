@@ -175,6 +175,7 @@ public final class FrameBridgeService extends Service {
                     session.stop(args.getString(Protocol.REQUEST), "九号结束投屏"); projection.stop(args.getString(Protocol.REQUEST), "九号结束投屏");
                     DrawSession.get(FrameBridgeService.this).stop(args.getString(Protocol.REQUEST), "九号结束投屏"); break;
                 case Protocol.SETTINGS:
+                    if (args.getBoolean("save_compat_scale")) session.saveCompatScale(args.getBoolean("compat_scale"));
                     if (args.getBoolean("save")) synchronized (session) {
                         if (projection.active() || DrawSession.get(FrameBridgeService.this).active()) throw new IllegalStateException("请先结束投屏再修改设置");
                         if (PrivilegeManager.source(FrameBridgeService.this).virtual())

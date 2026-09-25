@@ -61,6 +61,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
         injector = new VehicleCardInjector(this, frames);
         frames.setDynamicPageListener(injector::refresh);
         frames.setInputDeniedListener(this::inputDenied);
+        frames.setRenderFallbackListener(this::renderFallback);
     }
     public void attach(Application application) { if (applications.add(application)) application.registerActivityLifecycleCallbacks(this); }
     public void inflated(int id, View view) {
@@ -152,7 +153,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
         frames.stopDirect(request);
         frames.report("DISPLAY ended: " + message);
         injector.refresh();
-        toast(message);
+        notify(message);
     }
     private void showPreview(Activity activity) {
         String request = session.displayRequest();
@@ -165,7 +166,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
             preview.show();
             if (session.display() == DirectSession.Display.READY) preview.ready();
             applyPreviewOrientation(activity);
-        } catch (RuntimeException e) { preview = null; previewWanted = false; toast(activity, "无法显示虚拟显示器：" + Ipc.error(e)); }
+        } catch (RuntimeException e) { preview = null; previewWanted = false; error(activity, "无法显示虚拟显示器", Ipc.error(e)); }
     }
     /** Back or the toolbar's close only hide the preview; the display keeps running and the host gets its orientation back. */
     private void previewDismissed() {
@@ -306,7 +307,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
         injector.refresh();
         // A recording or drawing session is nothing but the cast, so it ends with it; the virtual display stays.
         if (!frames.cachedSource().virtual() && session.displayRunning()) { endDisplay(session.displayRequest(), message); return; }
-        toast(message);
+        notify(message);
     }
     private void closePanel() {
         if (panel != null) { panel.close(); panel = null; }
@@ -341,6 +342,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
     @Override public void onActivityResumed(Activity activity) {
         foreground = new WeakReference<>(activity); main.removeCallbacks(scan); main.post(scan);
         if (pendingInputDenial != null) promptInputDenial(activity);
+        if (pendingCompatScale) promptCompatScale(activity);
         if (compatible.getAsBoolean() && !CRUISE.equals(activity.getClass().getName())) scheduleUpdateCheck();
         if (panel != null && panel.owns(activity)) panel.resume();
         if (recordingPanel != null && recordingPanel.owns(activity)) recordingPanel.resume();
@@ -425,16 +427,52 @@ public final class DirectCastController implements Application.ActivityLifecycle
         title.setPadding(pad, pad, pad, pad / 2);
         TextView body = new TextView(activity); body.setText("请在开发者选项中打开「USB 调试（安全设置）」，然后重新开始投屏。"); body.setTextSize(14); body.setTextColor(theme.secondary);
         body.setPadding(pad, pad / 2, pad, pad); body.setLineSpacing(MirrorUi.dp(activity, 3), 1);
-        AlertDialog dialog = new AlertDialog.Builder(activity).setCustomTitle(title).setView(body)
-                .setNegativeButton("关闭", null).setPositiveButton("打开开发者选项", (d, which) -> openDeveloperOptions(activity)).create();
+        AlertDialog.Builder builder = new AlertDialog.Builder(activity).setCustomTitle(title).setView(body)
+                .setNegativeButton("关闭", null).setPositiveButton("打开开发者选项", (d, which) -> openDeveloperOptions(activity));
+        // Root and a root-run Shizuku / Sui can keep uid 0 instead; the ADB Shizuku cannot, which the authorization dialog explains.
+        if (frames.cachedSource().virtual()) builder.setNeutralButton("尝试不降权", (d, which) -> tryKeepRoot(activity));
+        AlertDialog dialog = builder.create();
         dialog.show();
         if (dialog.getWindow() != null) dialog.getWindow().setBackgroundDrawable(theme.background(activity, theme.surface, 24, false));
-        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(theme.accent);
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(theme.accent);
+        for (int which : new int[]{AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEUTRAL}) {
+            Button button = dialog.getButton(which); if (button != null) button.setTextColor(theme.accent);
+        }
+    }
+    /** Keep-root is saved once the session has ended; the module refuses the change while one runs, so the save is retried briefly. */
+    private void tryKeepRoot(Activity activity) {
+        String display = session.displayRequest();
+        if (display != null) endDisplay(display, "投屏已停止");
+        keepRootAttempt(activity, 0);
+    }
+    private void keepRootAttempt(Activity activity, int attempt) {
+        Bundle args = new Bundle(); args.putBoolean("save", true); args.putBoolean("keep_root", true);
+        frames.privilege(args, result -> { frames.report("PRIVILEGE keep root switched on from the injection prompt"); if (usable(activity)) toast(activity, "已开启不降权，请重新开始投屏"); },
+                message -> {
+                    if (attempt < 6 && message.contains("请先结束投屏")) main.postDelayed(() -> keepRootAttempt(activity, attempt + 1), 500);
+                    else error(activity, "无法开启不降权", message);
+                });
+    }
+    // ---------------------------------------------------------------- keep-DPI forced size refused
+    private boolean compatScalePrompted, pendingCompatScale;
+    private void renderFallback() {
+        if (compatScalePrompted) return;
+        Activity activity = foreground.get();
+        if (usable(activity)) promptCompatScale(activity); else pendingCompatScale = true;
+    }
+    /** The daemon could not force the logical size: this session runs at the buffer size, and the user decides about compat scaling for the next. */
+    private void promptCompatScale(Activity activity) {
+        if (compatScalePrompted || !usable(activity)) return;
+        compatScalePrompted = true; pendingCompatScale = false; frames.report("RENDER fallback prompt");
+        MirrorUi theme = new MirrorUi(activity, reference(activity, null));
+        TextView body = DialogContent.text(activity, theme, "系统拒绝了保持 DPI 的强制尺寸，本次投屏按缓冲区尺寸继续。从下次投屏起启用「兼容缩放」？", 14);
+        DialogContent.show(activity, theme, DialogContent.create(activity, theme, "兼容缩放", body, "启用", () -> frames.saveCompatScale(true, failure -> {
+            if (!usable(activity)) return;
+            if (failure == null) toast(activity, "已启用兼容缩放，下次投屏生效"); else error(activity, "无法启用兼容缩放", failure);
+        })));
     }
     private void openDeveloperOptions(Activity activity) {
         try { activity.startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); }
-        catch (RuntimeException e) { toast(activity, "无法打开开发者选项，请手动进入"); }
+        catch (RuntimeException e) { error(activity, "无法打开开发者选项", "请手动进入开发者选项。\n" + Ipc.error(e)); }
     }
     // ---------------------------------------------------------------- permission check before a start
     private void checkPermission(Activity activity, View anchor, Runnable start) {
@@ -666,10 +704,10 @@ public final class DirectCastController implements Application.ActivityLifecycle
                     else {
                         loaded[0] = false;
                         width.setEnabled(true);height.setEnabled(true);dpi.setEnabled(true);virtualWidth.setEnabled(true);virtualHeight.setEnabled(true);topColor.setEnabled(true);lightColor.setEnabled(true);keepDpi.setEnabled(true);
-                        connection.setText(error + "\n请重新读取后再保存。");
+                        connection.setText(error + "\n请重新读取后再保存。"); error(activity, "保存失败", error);
                     }
                 });
-            } catch (IllegalArgumentException e) { toast(activity, e instanceof NumberFormatException ? "请输入整数" : e.getMessage()); }
+            } catch (IllegalArgumentException e) { error(activity, "无法保存", e instanceof NumberFormatException ? "请输入整数" : String.valueOf(e.getMessage())); }
         });
         read.run();
         // The settings read owns the metadata slot first; a lookup not yet answered this process is asked for a moment later.
@@ -728,7 +766,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
         try {
             activity.startActivity(new Intent().setClassName(Protocol.MODULE, ModuleActivity.class.getName()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             frames.report("SETTINGS module entry opened");
-        } catch (RuntimeException e) { toast(activity, "无法打开 Ninebot Enhance"); frames.report("SETTINGS module entry failed " + e.getClass().getSimpleName()); }
+        } catch (RuntimeException e) { error(activity, "无法打开 Ninebot Enhance", Ipc.error(e)); frames.report("SETTINGS module entry failed " + e.getClass().getSimpleName()); }
     }
     public void entryDetails(Activity activity, View anchor) {
         if (!usable(activity)) return;
@@ -739,6 +777,13 @@ public final class DirectCastController implements Application.ActivityLifecycle
     private static View reference(Activity activity, View anchor) {
         return anchor != null ? anchor : activity.findViewById(android.R.id.content);
     }
+    /** Session ends that are not failures stay a toast; everything else is an error the user can read and copy. */
+    private static final Set<String> PLAIN_ENDS = Set.of("投屏已停止", "巡航页面已退出", "车辆页面已退出", "九号出行已退出");
+    private void notify(String message) {
+        if (message == null || PLAIN_ENDS.contains(message) || message.startsWith("巡航投屏已结束")) toast(message); else error(message);
+    }
+    private void error(String message) { Activity visible = foreground.get(); if (usable(visible)) error(visible, "出错了", message); }
+    private void error(Activity activity, String title, String message) { ErrorDialog.show(activity, reference(activity, null), title, message); }
     private void toast(String message) { Activity visible = foreground.get(); if (usable(visible)) toast(visible, message); }
     private static boolean usable(Activity activity) { return activity != null && !activity.isFinishing() && !activity.isDestroyed(); }
     private static void toast(Context context, String value) { Toast.makeText(context, value, Toast.LENGTH_LONG).show(); }

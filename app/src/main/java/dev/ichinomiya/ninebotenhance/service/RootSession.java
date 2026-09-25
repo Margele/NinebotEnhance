@@ -104,6 +104,11 @@ public final class RootSession {
         dev.ichinomiya.ninebotenhance.notification.BmsBundle.config(data, dev.ichinomiya.ninebotenhance.bms.BmsController.get(context).settings());
         return data;
     }
+    /** The compat scaling switch alone; it applies from the next session, so a running one does not block it. */
+    public synchronized void saveCompatScale(boolean value) {
+        context.getSharedPreferences("virtual_display", 0).edit().putInt("compat_scale", value ? 1 : 0).apply();
+        Diagnostics.add("SETTINGS compat scaling " + (value ? "on" : "off") + " from the next session");
+    }
     public void saveSettings(DisplaySettings value, String selected) {
         // PackageManager is a remote call: validate outside the session lock.
         ComponentName app = AppCatalog.requireLauncher(context.getPackageManager(), selected);
@@ -208,10 +213,10 @@ public final class RootSession {
                 boolean present = args.getBoolean("present");
                 if (present != touchPresent) { touchPresent = present; Diagnostics.add("TOUCH panel " + (present ? "present" : "absent")); }
             } else if ("render_fallback".equals(method)) {
-                // The ROM denied the forced size/density to the daemon: this session runs at the buffer size, and keep-DPI takes the
-                // compat scaling path from the next session on. The setting is flipped for real, so the dialog shows it checked.
-                renderFallback = true; context.getSharedPreferences("virtual_display", 0).edit().putInt("compat_scale", 1).apply();
-                Diagnostics.add("ROOT RENDER fallback reported; compat scaling switched on for the next session");
+                // The ROM denied the forced size/density to the daemon: this session runs at the buffer size. The status carries the
+                // refusal to the host, which asks whether keep-DPI should take the compat scaling path from the next session on.
+                renderFallback = true;
+                Diagnostics.add("ROOT RENDER fallback reported; the host is asked about compat scaling");
             } else if ("input_denied".equals(method)) {
                 inputDenied = LogDigest.head(args.getString("error", ""), 360); Diagnostics.add("INPUT denied by the system: " + inputDenied);
             } else if ("error".equals(method)) {
@@ -305,7 +310,6 @@ public final class RootSession {
                 String error = Ipc.call(endpoint, Protocol.ROOT_INPUT, args).getString("error");
                 if (error != null && SystemClock.elapsedRealtime() - lastInputError > 5000) {
                     lastInputError = SystemClock.elapsedRealtime(); Diagnostics.add("INPUT " + error);
-                    main.post(() -> android.widget.Toast.makeText(context, "触控注入失败，请查看日志：" + error, 1).show());
                 }
             } }
             catch (Exception e) { Diagnostics.add("INPUT " + Ipc.error(e)); }
@@ -316,7 +320,7 @@ public final class RootSession {
         commands.post(() -> { try {
             if (endpoint == null) return;
             Bundle result = Ipc.call(endpoint, code, args); String error = result.getString("error");
-            if (error != null) { Diagnostics.add(error); main.post(() -> android.widget.Toast.makeText(context, error, 1).show()); }
+            if (error != null) Diagnostics.add(error);
         } catch (Exception e) { stop(request, "虚拟屏连接中断：" + Ipc.error(e)); } });
     }
 }

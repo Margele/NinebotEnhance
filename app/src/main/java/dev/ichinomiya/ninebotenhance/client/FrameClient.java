@@ -370,6 +370,9 @@ public final class FrameClient {
     public DynamicViewFactory dynamicViewFactory(){return dynamicViewFactory;}
     public void setDynamicPageListener(Runnable listener){dynamicPageListener=listener==null?()->{}:listener;}
     public void setInputDeniedListener(java.util.function.Consumer<String> listener){inputDeniedListener=listener==null?error->{}:listener;}
+    private volatile Runnable renderFallbackListener=()->{};
+    /** The daemon was refused the forced logical size: the host asks whether keep-DPI should switch to compat scaling next time. */
+    public void setRenderFallbackListener(Runnable listener){renderFallbackListener=listener==null?()->{}:listener;}
     public void dynamicViewFactory(DynamicViewFactory value){
         DynamicViewFactory previous=dynamicViewFactory;dynamicViewFactory=value;
         if(previous==null||previous.deviceId()!=value.deviceId()||!previous.deviceTag().equals(value.deviceTag())){report("FEATURE page factory deviceId="+value.deviceId());main.post(dynamicPageListener);}
@@ -670,8 +673,8 @@ public final class FrameClient {
                 long now = SystemClock.elapsedRealtime();
                 if (now - lastControlError > 5000) {
                     lastControlError = now; report("INLINE CONTROL " + Ipc.error(e));
-                    main.post(() -> { if (context != null && request.equals(ownerRequest))
-                        android.widget.Toast.makeText(context, "虚拟屏操作失败，请查看日志", 1).show(); });
+                    String detail = Ipc.error(e);
+                    main.post(() -> { if (request.equals(ownerRequest)) dev.ichinomiya.ninebotenhance.ui.ErrorDialog.show(inlinePreview.get(), "虚拟屏操作失败\n" + detail); });
                 }
             } finally { pendingInput.decrementAndGet(); if (event != null) event.recycle(); }
         });
@@ -738,7 +741,7 @@ public final class FrameClient {
             touchBound = status.getBoolean("touch_bound"); touchPresent = status.getBoolean("touch_present");
             String denied = status.getString("input_denied", "");
             if (!denied.isEmpty() && !denied.equals(inputDeniedNotified)) { inputDeniedNotified = denied; report("INPUT denied: " + denied); main.post(() -> inputDeniedListener.accept(denied)); }
-            if (status.getBoolean("render_fallback") && !renderFallbackNoted) { renderFallbackNoted = true; report("RENDER fallback: the forced logical size was refused, compat scaling is on from the next session"); }
+            if (status.getBoolean("render_fallback") && !renderFallbackNoted) { renderFallbackNoted = true; report("RENDER fallback: the forced logical size was refused; asking about compat scaling"); main.post(() -> renderFallbackListener.run()); }
         } else {
             active = displayReady = false; state = "模块服务已重启或会话已失效，请重新开始投屏";
             appRecovery = AppRecoveryState.HIDDEN; appRecoveryDetail = ""; touchBound = touchPresent = false;
@@ -914,8 +917,8 @@ public final class FrameClient {
                 PendingIntent intent = Ipc.parcelable(result, "lamp_intent", PendingIntent.class);
                 if (intent == null) throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
                 activity.startIntentSenderForResult(intent.getIntentSender(), -1, null, 0, 0, 0, Ipc.launchOptions());
-            } catch (Exception e) { android.widget.Toast.makeText(activity, "无法打开大灯控制：" + Ipc.error(e), 1).show(); }
-        }, error -> { if (!activity.isDestroyed()) android.widget.Toast.makeText(activity, error, 1).show(); });
+            } catch (Exception e) { dev.ichinomiya.ninebotenhance.ui.ErrorDialog.show(activity, null, "无法打开大灯控制", Ipc.error(e)); }
+        }, error -> dev.ichinomiya.ninebotenhance.ui.ErrorDialog.show(activity, null, "无法打开大灯控制", error));
     }
     /** Opens the module's own BMS screen; its Bluetooth permissions belong to the module, not to Ninebot. */
     public void bmsSettings(Activity activity,boolean dark){
@@ -926,8 +929,8 @@ public final class FrameClient {
                 PendingIntent intent=Ipc.parcelable(result, "bms_intent", PendingIntent.class);
                 if(intent==null)throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
                 activity.startIntentSenderForResult(intent.getIntentSender(),-1,null,0,0,0,Ipc.launchOptions());
-            }catch(Exception e){android.widget.Toast.makeText(activity,"无法打开 BMS 管理："+Ipc.error(e),1).show();}
-        },error->{if(!activity.isDestroyed())android.widget.Toast.makeText(activity,error,1).show();});
+            }catch(Exception e){dev.ichinomiya.ninebotenhance.ui.ErrorDialog.show(activity,null,"无法打开 BMS 管理",Ipc.error(e));}
+        },error->dev.ichinomiya.ninebotenhance.ui.ErrorDialog.show(activity,null,"无法打开 BMS 管理",error));
     }
     /** Opens the module's own touch panel screen; the panel is read and held by the module, never by Ninebot. */
     public void touchSettings(Activity activity,boolean dark){
@@ -938,8 +941,8 @@ public final class FrameClient {
                 PendingIntent intent=Ipc.parcelable(result, "touch_intent", PendingIntent.class);
                 if(intent==null)throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
                 activity.startIntentSenderForResult(intent.getIntentSender(),-1,null,0,0,0,Ipc.launchOptions());
-            }catch(Exception e){android.widget.Toast.makeText(activity,"无法打开触摸屏管理："+Ipc.error(e),1).show();}
-        },error->{if(!activity.isDestroyed())android.widget.Toast.makeText(activity,error,1).show();});
+            }catch(Exception e){dev.ichinomiya.ninebotenhance.ui.ErrorDialog.show(activity,null,"无法打开触摸屏管理",Ipc.error(e));}
+        },error->dev.ichinomiya.ninebotenhance.ui.ErrorDialog.show(activity,null,"无法打开触摸屏管理",error));
     }
     public void notificationSettings(Activity activity, boolean dark) {
         Bundle args = new Bundle(); args.putBoolean("dark", dark);
@@ -949,8 +952,8 @@ public final class FrameClient {
                 PendingIntent intent = Ipc.parcelable(result, "settings_intent", PendingIntent.class);
                 if (intent == null) throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
                 activity.startIntentSenderForResult(intent.getIntentSender(), -1, null, 0, 0, 0, Ipc.launchOptions());
-            } catch (Exception e) { android.widget.Toast.makeText(activity, "无法打开通知设置：" + Ipc.error(e), 1).show(); }
-        }, error -> { if (!activity.isDestroyed()) android.widget.Toast.makeText(activity, error, 1).show(); });
+            } catch (Exception e) { dev.ichinomiya.ninebotenhance.ui.ErrorDialog.show(activity, null, "无法打开通知设置", Ipc.error(e)); }
+        }, error -> dev.ichinomiya.ninebotenhance.ui.ErrorDialog.show(activity, null, "无法打开通知设置", error));
     }
     public void pickLaunchApp(Activity activity, boolean dark, String selected, Consumer<Bundle> chosen) {
         Bundle args = new Bundle(); args.putBoolean("dark", dark); args.putString(AppCatalog.SELECTED, selected);
@@ -967,8 +970,8 @@ public final class FrameClient {
                 PendingIntent intent = Ipc.parcelable(result, "picker_intent", PendingIntent.class);
                 if (intent == null) throw new IllegalStateException("模块版本不匹配，请更新并重启九号出行");
                 activity.startIntentSenderForResult(intent.getIntentSender(), -1, null, 0, 0, 0, Ipc.launchOptions());
-            } catch (Exception e) { android.widget.Toast.makeText(activity, "无法打开应用列表：" + Ipc.error(e), 1).show(); }
-        }, error -> { if (!activity.isDestroyed()) android.widget.Toast.makeText(activity, error, 1).show(); });
+            } catch (Exception e) { dev.ichinomiya.ninebotenhance.ui.ErrorDialog.show(activity, null, "无法打开应用列表", Ipc.error(e)); }
+        }, error -> dev.ichinomiya.ninebotenhance.ui.ErrorDialog.show(activity, null, "无法打开应用列表", error));
     }
     public boolean debugModeUnlocked() { return debugMode.unlocked(); }
     public boolean debugModeEnabled() { return debugMode.enabled(); }
@@ -1139,6 +1142,14 @@ public final class FrameClient {
         metadataCall(Protocol.PRIVILEGE, args, result -> {
             try { cachePrivilege(result); done.accept(result); } catch (RuntimeException e) { failed.accept(Ipc.error(e)); }
         }, failed);
+    }
+    /** The compat scaling switch alone; accepted while a session runs because it only applies to the next one. */
+    public void saveCompatScale(boolean value, Consumer<String> done) {
+        Bundle args = new Bundle(); args.putBoolean("save_compat_scale", true); args.putBoolean("compat_scale", value);
+        metadataCall(Protocol.SETTINGS, args, result -> {
+            try { cacheSettings(Ipc.settings(result), result.getString(AppCatalog.SELECTED, "")); done.accept(null); }
+            catch (RuntimeException e) { done.accept(Ipc.error(e)); }
+        }, done);
     }
     public void saveSettings(DisplaySettings value, String selected, Consumer<String> done) {
         Bundle args = new Bundle(); args.putBoolean("save", true); Ipc.settings(args, value);

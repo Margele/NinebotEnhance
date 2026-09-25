@@ -76,7 +76,7 @@ public final class ModuleActivity extends Activity {
                 try {
                     startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(Uri.parse("package:" + Protocol.TARGET)));
                     Toast.makeText(this, "请在页面里点「强制停止」", Toast.LENGTH_LONG).show();
-                } catch (RuntimeException e) { Toast.makeText(this, "无法强制退出九号出行", Toast.LENGTH_SHORT).show(); }
+                } catch (RuntimeException e) { ErrorDialog.show(this, null, "无法强制退出九号出行", dev.ichinomiya.ninebotenhance.ipc.Ipc.error(e)); }
             });
         }, "Enhance-ForceStop").start();
     }

@@ -84,9 +84,9 @@ public final class NotificationSettingsActivity extends Activity {
     }
     private void openNotificationAccess(){
         try{startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,NotificationPreferences.listener(this).flattenToString()));}
-        catch(RuntimeException e){try{startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));}catch(RuntimeException ignored){Toast.makeText(this,"请在系统设置中搜索通知使用权",Toast.LENGTH_LONG).show();}}
+        catch(RuntimeException e){try{startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));}catch(RuntimeException second){ErrorDialog.show(this,null,"无法打开通知使用权页面","请在系统设置中搜索通知使用权。\n"+dev.ichinomiya.ninebotenhance.ipc.Ipc.error(second));}}
     }
-    private void save(){try{prefs.save(enabled.isChecked(),duration.getProgress(),widthBar.getProgress(),limitBar.getProgress(),selected);Toast.makeText(this,"通知设置已保存",Toast.LENGTH_SHORT).show();finish();}catch(RuntimeException e){Toast.makeText(this,e.getMessage(),Toast.LENGTH_LONG).show();}}
+    private void save(){try{prefs.save(enabled.isChecked(),duration.getProgress(),widthBar.getProgress(),limitBar.getProgress(),selected);Toast.makeText(this,"通知设置已保存",Toast.LENGTH_SHORT).show();finish();}catch(RuntimeException e){ErrorDialog.show(this,null,"保存失败",String.valueOf(e.getMessage()));}}
     private interface Describe{String of(int value);}
     private SeekBar slider(LinearLayout parent,LinearLayout.LayoutParams params,String caption,int min,int max,int value,Describe describe){
         LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.addView(label(caption,14),new LinearLayout.LayoutParams(0,-2,1));
