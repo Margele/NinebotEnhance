@@ -5,6 +5,7 @@
 - 控件标签只写名称，后面不加括号补充（写“寄存器探测”，不写“寄存器探测（画在画面左侧并写日志）”）。
 - 滑块当前值只显示数值和单位（“45 秒”“100 W”），不写条件或后果。
 - 需要解释的内容放到 README.md 或 docs/architecture.md，不进 APK。
+- 唯一例外是模块本体 `ui.ModuleActivity`：它是权限检测页，每行权限下面写一句「拿来做什么」，这是用户明确要求的；本体不做按钮式入口（自启动设置、通知使用权、打开九号这些按钮已删），只有权限列表和一个「强制退出九号出行」按钮。强制退出按顺序走 Shizuku 的 `PrivilegedLauncher.FORCE_STOP`（固定命令 `am force-stop cn.ninebot.ninebot`，UserService 仍不接受任意 shell）、`su -c`，都不行就打开九号的应用信息页。
 
 ## 构建与验证
 - 主机测试 + APK：`py -3 scripts/build.py --sdk <SDK> --jdk <JDK>`。

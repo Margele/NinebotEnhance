@@ -144,6 +144,25 @@ public final class PrivilegeManager {
             return new UserProcess(service, output, args, connection);
         } catch (Exception e) { cancelled.set(true); cleanup(args, connection); throw e; }
     }
+    /** The fixed force-stop of the target through a short-lived UserService; blocks, so call it off the main thread. */
+    public static int forceStopTarget(Context context) throws Exception {
+        if (Looper.myLooper() == Looper.getMainLooper()) throw new IllegalStateException("Cannot wait for UserService on UI thread");
+        Bundle available = status(context);
+        if (!available.getBoolean("privilege_granted")) throw new IllegalStateException(available.getString("privilege_status"));
+        Shizuku.UserServiceArgs args = new Shizuku.UserServiceArgs(new ComponentName(context, PrivilegedLauncher.class))
+                .tag("ninebot-enhance-stop-" + java.util.UUID.randomUUID()).version(Protocol.VERSION_CODE).daemon(false).processNameSuffix("privileged");
+        CompletableFuture<IBinder> connected = new CompletableFuture<>();
+        ServiceConnection connection = new ServiceConnection() {
+            @Override public void onServiceConnected(ComponentName name, IBinder service) { connected.complete(service); }
+            @Override public void onServiceDisconnected(ComponentName name) { connected.completeExceptionally(new IOException("授权服务已断开")); }
+        };
+        MAIN.post(() -> { try { Shizuku.bindUserService(args, connection); } catch (RuntimeException e) { connected.completeExceptionally(e); } });
+        try {
+            IBinder service = connected.get(15, TimeUnit.SECONDS);
+            Bundle response = call(service, PrivilegedLauncher.FORCE_STOP, new Bundle());
+            return response.getBoolean("finished") ? response.getInt("exit") : -1;
+        } finally { cleanup(args, connection); }
+    }
     private static Bundle call(IBinder binder, int code, Bundle args) throws RemoteException {
         Parcel data = Parcel.obtain(), reply = Parcel.obtain();
         try {

@@ -28,6 +28,8 @@ UserService 仅接受拥有者模块 UID，启动类和 APK 路径来自自己�
 
 客户端使用 `FrameBridgeService.class.getName()` 生成绑定目标，避免包结构调整后仍拼接过期路径。主机测试核对该目标与 Manifest 的导出服务一致。模块进程没有常驻守护：它只在九号 `bindService(BIND_AUTO_CREATE)` 时被启动，九号退出即解绑并可被系统回收；手机、音乐、音量采样都只在九号请求快照时进行，进程内没有周期任务，唯一能让它在九号之外存活的是系统为通知监听器保持的绑定。`BindingState` 统计从未连上的绑定代数；`ServiceBridge` 在 `bindService` 返回 false 或连续超时未回调时，把 HyperOS / MIUI 的自启动提示附在状态文本里（按 `ro.mi.os.version.name` / `ro.miui.ui.version.name` 或小米系品牌判定），设置页在这类系统上多一个“自启动设置”按钮，依次尝试 MIUI 应用权限编辑器、自启动管理页和系统应用详情页。
 
+`ui.ModuleActivity` 是模块本体的桌面入口，只有一页权限检测和一个动作：每行一项授权（`FrameBridgeService.onBind` 记在 `module_status` 偏好里的 `bound_at` 判断九号是否连接过模块；通知使用权 `NotificationPreferences.granted`；`BLUETOOTH_CONNECT` / `BLUETOOTH_SCAN`；`READ_PHONE_STATE`；`PrivilegeManager.status` 的 Shizuku / Root 状态；自启动只能手动确认；`TouchPanelUsb.permitted` 查绑定的 USB 面板；屏幕录制和安装时授予的权限只列状态），行下面一句用途，未授权的行点击即 `requestPermissions` 或跳系统页面。「强制退出九号出行」按顺序试 Shizuku / Sui（`PrivilegedLauncher.FORCE_STOP`，固定执行 `am force-stop cn.ninebot.ninebot`，UserService 仍不接受任意命令）、`su -c am force-stop`，都不可用就打开九号的应用信息页。
+
 遵循 [官方 API 接入指南](https://github.com/RikkaApps/Shizuku-API#guide)，Manifest 中的 `ShizukuProvider` 在模块进程初始化 Sui；不在九号进程请求 Sui Binder，也不重复调用 `Sui.init`。模块服务创建时注册进程级 Binder received/dead 和 permission result 监听，不持有 Activity。收到 ready 回调后才启用授权请求，检查已授权状态与 `shouldShowRequestPermissionRationale`，仅由显式按钮操作调用 `requestPermission`。
 
 请求期间用原子状态阻止重复申请；结果、错误或 Binder 断开会更新状态。授权窗口以 1.5 秒间隔读取状态，保留未保存的授权模式选择；关闭窗口时移除刷新回调。自动读取期间收到授权 / 保存点击时排队一次，不重复提交。状态读取不触发系统授权弹窗。

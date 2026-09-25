@@ -6,10 +6,13 @@ import dev.ichinomiya.ninebotenhance.core.DisplaySettings;
 import dev.ichinomiya.ninebotenhance.ipc.Protocol;
 import java.io.*;
 
-/** Shizuku UserService: launches only our fixed display daemon, never an arbitrary shell command. */
+/**
+ * Shizuku UserService: launches only our fixed display daemon and force-stops only the target package, never an arbitrary
+ * shell command.
+ */
 public final class PrivilegedLauncher extends Binder {
     public static final String DESCRIPTOR = Protocol.MODULE + ".PrivilegedLauncher.v1";
-    public static final int START = 1, EXIT_CODE = 2, STOP = 3, DESTROY = 16777115;
+    public static final int START = 1, EXIT_CODE = 2, STOP = 3, FORCE_STOP = 4, DESTROY = 16777115;
     private final int appUid;
     private final String apk;
     private java.lang.Process child;
@@ -64,10 +67,19 @@ public final class PrivilegedLauncher extends Binder {
                         catch (IllegalThreadStateException ignored) { result.putBoolean("finished", false); } }
                     break;
                 case STOP: shutdown(); break;
+                case FORCE_STOP: {
+                    // The one fixed command besides the daemon: stop the target so LSPosed injects the module on its next start.
+                    java.lang.Process stop = new ProcessBuilder("/system/bin/sh", "-c", "am force-stop " + Protocol.TARGET).redirectErrorStream(true).start();
+                    boolean finished = stop.waitFor(10, java.util.concurrent.TimeUnit.SECONDS);
+                    if (!finished) stop.destroy();
+                    result.putBoolean("finished", finished); result.putInt("exit", finished ? stop.exitValue() : -1);
+                    break;
+                }
                 default: return false;
             }
             reply.writeNoException(); reply.writeBundle(result); return true;
         } catch (IOException e) { throw new IllegalStateException("无法启动辅助进程：" + e.getClass().getSimpleName()); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException("等待命令结束时被中断"); }
         finally { Binder.restoreCallingIdentity(identity); }
     }
     /** Shell uid plus the input group (external touch panels); a su that rejects the group options is retried without them. */

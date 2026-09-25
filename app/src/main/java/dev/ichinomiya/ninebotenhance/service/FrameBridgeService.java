@@ -209,7 +209,13 @@ public final class FrameBridgeService extends Service {
         dev.ichinomiya.ninebotenhance.navi.NaviLoopbackServer.start();
         Diagnostics.add("SERVICE created pid=" + android.os.Process.myPid());
     }
-    @Override public IBinder onBind(Intent intent) { Diagnostics.add("SERVICE bound"); RootSession.get(this); return binder; }
+    /** Ninebot binding the service is the only sign, from inside the module, that LSPosed injected it; the entry page shows when that last happened. */
+    public static final String STATUS_PREFERENCES = "module_status", BOUND_AT = "bound_at";
+    @Override public IBinder onBind(Intent intent) {
+        Diagnostics.add("SERVICE bound"); RootSession.get(this);
+        try { getSharedPreferences(STATUS_PREFERENCES, MODE_PRIVATE).edit().putLong(BOUND_AT, System.currentTimeMillis()).apply(); } catch (RuntimeException ignored) {}
+        return binder;
+    }
     @Override public boolean onUnbind(Intent intent) { Diagnostics.add("SERVICE unbound"); return super.onUnbind(intent); }
     @Override public void onDestroy() {
         Diagnostics.add("SERVICE destroyed"); RootSession.get(this).stopCurrent("九号连接服务已关闭");
