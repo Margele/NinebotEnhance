@@ -571,13 +571,13 @@ public final class DirectCastController implements Application.ActivityLifecycle
         Button hidden=new Button(activity);hidden.setText("隐藏功能");theme.button(hidden,null);
         Button touch=new Button(activity);touch.setText("触摸屏管理");theme.button(touch,null);
         Button drawing=new Button(activity);drawing.setText("绘制管理");theme.button(drawing,null);
-        buttonRow(activity, layout, 12, new Button[]{widgets, drawing, encoder, hidden, touch});
+        LinearLayout tools = buttonRow(activity, layout, 12, new Button[]{widgets, drawing, encoder, hidden, touch});
         widgets.setOnClickListener(v->WidgetSettingsDialog.show(activity,frames,card));
         drawing.setOnClickListener(v->DrawSettingsDialog.show(activity,frames,card));
         Button lamp=new Button(activity);lamp.setText("大灯管理");theme.button(lamp,null);
         Button board=new Button(activity);board.setText("BMS 管理");theme.button(board,null);
         Button reads=new Button(activity);reads.setText("数据读取设置");theme.button(reads,null);
-        buttonRow(activity, layout, 12, new Button[]{lamp, board, reads});
+        LinearLayout devices = buttonRow(activity, layout, 12, new Button[]{lamp, board, reads});
         lamp.setOnClickListener(v->frames.lampSettings(activity,theme.dark));
         board.setOnClickListener(v->frames.bmsSettings(activity,theme.dark));
         reads.setOnClickListener(v->ReadSettingsDialog.show(activity,frames,card));
@@ -634,6 +634,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
             for (View field : new View[]{appLabel,appPicker,touch,widgets})field.setVisibility(source.virtual()?View.VISIBLE:View.GONE);
             drawing.setVisibility(source.draws()?View.VISIBLE:View.GONE);
             reads.setVisibility(source.captures()?View.GONE:View.VISIBLE);
+            alignRow(activity, tools); alignRow(activity, devices);
         };
         showMode.run();
         Runnable read = () -> {
@@ -720,7 +721,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
         if (update == null) main.postDelayed(() -> { if (dialog.isShowing()) frames.checkUpdate(false, known -> { update = known; if (dialog.isShowing()) showUpdate.accept(known); }, error -> {}); }, 1500);
     }
     /** One row of equal-width buttons; labels shrink before they wrap so each stays on one line. */
-    private static void buttonRow(Activity activity, LinearLayout layout, int topDp, Button[] buttons) {
+    private static LinearLayout buttonRow(Activity activity, LinearLayout layout, int topDp, Button[] buttons) {
         LinearLayout row = new LinearLayout(activity); row.setGravity(Gravity.CENTER_VERTICAL); row.setBaselineAligned(false);
         for (Button button : buttons) {
             button.setMaxLines(1); button.setPadding(MirrorUi.dp(activity, 3), button.getPaddingTop(), MirrorUi.dp(activity, 3), button.getPaddingBottom());
@@ -730,6 +731,18 @@ public final class DirectCastController implements Application.ActivityLifecycle
         }
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.topMargin = MirrorUi.dp(activity, topDp);
         layout.addView(row, params);
+        return row;
+    }
+    /** The gap sits between visible buttons only: hiding a row's first button must not indent the one that takes its place. */
+    private static void alignRow(Activity activity, LinearLayout row) {
+        boolean first = true;
+        for (int i = 0; i < row.getChildCount(); i++) {
+            View child = row.getChildAt(i); if (child.getVisibility() == View.GONE) continue;
+            LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) child.getLayoutParams();
+            int margin = first ? 0 : MirrorUi.dp(activity, 8);
+            if (params.getMarginStart() != margin) { params.setMarginStart(margin); child.setLayoutParams(params); }
+            first = false;
+        }
     }
     private static LinearLayout fieldRow(Activity activity, LinearLayout layout) {
         LinearLayout row = new LinearLayout(activity); row.setOrientation(LinearLayout.HORIZONTAL);
