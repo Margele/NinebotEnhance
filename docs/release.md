@@ -7,7 +7,7 @@ Ninebot Enhance 的首个发布版本为 **1.0.0**，Git 发布标签为 `v1.0.0
 - 项目名：`Ninebot Enhance`。
 - 包名：`dev.ichinomiya.ninebotenhance`。
 - `version.properties` 与 `ipc/Protocol.java` 中的版本名称、版本代码必须一致，构建脚本会自动核对。
-- 当前发布版本为 `1.1.13`，Android `versionCode=51`，使用原签名覆盖安装；改动见 `CHANGELOG.md`。
+- 当前发布版本为 `1.1.14`，Android `versionCode=52`，使用原签名覆盖安装；改动见 `CHANGELOG.md`。
 - 发布使用固定签名，公开 SHA-256 指纹保存在 `release-signing-certificate.txt`。
 - 私钥与密码保存在 Git 忽略的 `signing/`，后续更新继续使用同一密钥。
 
