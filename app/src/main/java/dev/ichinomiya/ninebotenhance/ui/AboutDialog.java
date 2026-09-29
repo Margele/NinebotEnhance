@@ -59,6 +59,12 @@ public final class AboutDialog {
         content.addView(update, updateParams);
         update.setOnClickListener(v -> { update.setEnabled(false); update.setText("检查中"); checkUpdate(activity, theme, frames, update, System.currentTimeMillis(), true, 0); });
         TextView authors = DialogContent.text(activity, theme, "作者 " + OpenSourceNotice.AUTHORS, 13); authors.setTextColor(theme.secondary); content.addView(authors);
+        TextView group = DialogContent.text(activity, theme, "QQ 群 " + OpenSourceNotice.QQ_GROUP, 13); group.setTextColor(theme.accent); content.addView(group);
+        group.setOnClickListener(v -> {
+            android.content.ClipboardManager clipboard = activity.getSystemService(android.content.ClipboardManager.class);
+            if (clipboard != null) clipboard.setPrimaryClip(android.content.ClipData.newPlainText("QQ", OpenSourceNotice.QQ_GROUP));
+            if (android.os.Build.VERSION.SDK_INT < 33) Toast.makeText(activity, "已复制", Toast.LENGTH_SHORT).show();
+        });
         TextView copyright = DialogContent.text(activity, theme, "Copyright 2026 Ninebot Enhance contributors\nApache License 2.0\n本项目不是九号官方产品。", 13);
         copyright.setTextColor(theme.secondary); content.addView(copyright);
         resourceButton(activity, theme, content, "开源许可证", "META-INF/licenses/NinebotEnhance-Apache-2.0.txt");

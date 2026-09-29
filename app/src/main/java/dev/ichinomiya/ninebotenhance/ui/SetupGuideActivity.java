@@ -17,6 +17,7 @@ import android.widget.*;
 import dev.ichinomiya.ninebotenhance.bms.BmsController;
 import dev.ichinomiya.ninebotenhance.core.BmsSettings;
 import dev.ichinomiya.ninebotenhance.core.LampSettings;
+import dev.ichinomiya.ninebotenhance.core.OpenSourceNotice;
 import dev.ichinomiya.ninebotenhance.core.PictureSource;
 import dev.ichinomiya.ninebotenhance.core.PrivilegeMode;
 import dev.ichinomiya.ninebotenhance.lamp.LampController;
@@ -70,6 +71,16 @@ public final class SetupGuideActivity extends Activity {
         ScrollView scroll = new ScrollView(this); scroll.addView(root); scroll.setBackgroundColor(theme.surface);
         setContentView(scroll);
         show(STEP_SOURCE);
+        if (saved == null) groupDialog();
+    }
+    /** Shown once, on the guide's first appearance: the number is selectable and the button copies it. */
+    private void groupDialog() {
+        TextView body = DialogContent.text(this, theme, "QQ 群 " + OpenSourceNotice.QQ_GROUP, 16); body.setTextIsSelectable(true);
+        DialogContent.show(this, theme, DialogContent.create(this, theme, "Ninebot Enhance", body, "复制", () -> {
+            android.content.ClipboardManager clipboard = getSystemService(android.content.ClipboardManager.class);
+            if (clipboard != null) clipboard.setPrimaryClip(android.content.ClipData.newPlainText("QQ", OpenSourceNotice.QQ_GROUP));
+            if (Build.VERSION.SDK_INT < 33) Toast.makeText(this, "已复制", Toast.LENGTH_SHORT).show();
+        }));
     }
     @Override protected void onResume() { super.onResume(); if (step >= STEP_PERMISSIONS) show(step); }
     @Override protected void onPause() { super.onPause(); main.removeCallbacksAndMessages(null); if (rows != null) rows.stop(); }
