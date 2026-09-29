@@ -16,7 +16,7 @@ public final class VolumeStatus {
     private static final String CHANGED="android.media.VOLUME_CHANGED_ACTION",STREAM="android.media.EXTRA_VOLUME_STREAM_TYPE",
             VALUE="android.media.EXTRA_VOLUME_STREAM_VALUE",PREVIOUS="android.media.EXTRA_PREV_VOLUME_STREAM_VALUE";
     private final AudioManager audio;private int stream=AudioManager.STREAM_MUSIC,level=-1,max=15,polledMusic=-1;private long seq,changedAt;
-    private final Interceptor interceptor;private int restoringTo=-1;private long restoringAt;
+    private final Interceptor interceptor;private int restoringTo=-1,restoringStream=-1;private long restoringAt;
     /** Volume the current press burst started at; every held repeat restores to this same anchor instead of the drifting per-event previous. */
     private int baseline=-1;private long burstAt;private static final long BURST_GAP_MS=900;
     public VolumeStatus(Context context){this(context,up->false);}
@@ -31,19 +31,19 @@ public final class VolumeStatus {
             if(intent==null||!CHANGED.equals(intent.getAction()))return;
             int type=intent.getIntExtra(STREAM,-1),value=intent.getIntExtra(VALUE,-1),previous=intent.getIntExtra(PREVIOUS,-1);
             if(type<0||value<0||value==previous)return;
-            if(type!=AudioManager.STREAM_MUSIC)android.util.Log.i("NinebotEnhance","LAMP volume stream "+type+" "+previous+"->"+value);
-            if(type==AudioManager.STREAM_MUSIC&&consumed(value,previous))return;
+            // A paused or absent player leaves the keys on whatever stream the ROM picks; the lamp claims that press just the same.
+            if(consumed(type,value,previous))return;
             record(type,value);
         }},new IntentFilter(CHANGED),Context.RECEIVER_EXPORTED);}catch(RuntimeException ignored){}
     }
     /** The restore we asked for is not a rider action, and a claimed press must not reach the volume bar. */
-    private boolean consumed(int value,int previous){
+    private boolean consumed(int type,int value,int previous){
         synchronized(this){
-            if(value==restoringTo&&SystemClock.elapsedRealtime()-restoringAt<1500){polledMusic=value;return true;}
+            if(type==restoringStream&&value==restoringTo&&SystemClock.elapsedRealtime()-restoringAt<1500){if(type==AudioManager.STREAM_MUSIC)polledMusic=value;return true;}
         }
         if(previous<0||audio==null)return false;
         boolean taken=interceptor.consume(value>previous);
-        android.util.Log.i("NinebotEnhance","LAMP volume media "+previous+"->"+value+" taken="+taken);
+        android.util.Log.i("NinebotEnhance","LAMP volume stream "+type+" "+previous+"->"+value+" taken="+taken);
         if(!taken){synchronized(this){baseline=-1;}return false;}
         long now=SystemClock.elapsedRealtime();int target;
         synchronized(this){
@@ -52,7 +52,7 @@ public final class VolumeStatus {
             if(baseline<0||now-burstAt>BURST_GAP_MS)baseline=previous;
             burstAt=now;target=baseline;
         }
-        restore(target,value>previous);
+        restore(type,target,value>previous);
         return true;
     }
     /**
@@ -61,16 +61,16 @@ public final class VolumeStatus {
      * through adjustStreamVolume moves the whole group, and the level is read back and forced to the baseline if it still did not
      * land, which also recovers when a held key stepped several times before this restore ran.
      */
-    private void restore(int baseline,boolean up){
+    private void restore(int stream,int baseline,boolean up){
         int after=-1;
         try{
-            audio.adjustStreamVolume(AudioManager.STREAM_MUSIC,up?AudioManager.ADJUST_LOWER:AudioManager.ADJUST_RAISE,0);
-            after=audio.getStreamVolume(AudioManager.STREAM_MUSIC);
-            if(after!=baseline){audio.setStreamVolume(AudioManager.STREAM_MUSIC,baseline,0);after=audio.getStreamVolume(AudioManager.STREAM_MUSIC);}
+            audio.adjustStreamVolume(stream,up?AudioManager.ADJUST_LOWER:AudioManager.ADJUST_RAISE,0);
+            after=audio.getStreamVolume(stream);
+            if(after!=baseline){audio.setStreamVolume(stream,baseline,0);after=audio.getStreamVolume(stream);}
         }catch(RuntimeException e){android.util.Log.i("NinebotEnhance","LAMP volume restore failed "+e);}
         int landed=after<0?baseline:after;
-        synchronized(this){restoringTo=landed;restoringAt=SystemClock.elapsedRealtime();polledMusic=landed;}
-        android.util.Log.i("NinebotEnhance","LAMP volume restored to "+landed+" wanted "+baseline);
+        synchronized(this){restoringStream=stream;restoringTo=landed;restoringAt=SystemClock.elapsedRealtime();if(stream==AudioManager.STREAM_MUSIC)polledMusic=landed;}
+        android.util.Log.i("NinebotEnhance","LAMP volume stream "+stream+" restored to "+landed+" wanted "+baseline);
     }
     private synchronized void record(int type,int value){
         if(audio==null)return;

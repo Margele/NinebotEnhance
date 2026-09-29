@@ -11,11 +11,29 @@ import java.util.*;
 /** Public media-session API under the module's notification-listener grant. Memory only, no artwork URI fetches. */
 public final class MusicStatus {
     private final Context context;private final Handler worker;
-    private volatile Bundle cached=new Bundle();private boolean pending;private long sampled=-10000;
+    private volatile Bundle cached=new Bundle();private boolean pending;private volatile long sampled=-10000;
     private MediaController selected;private String selectedId="";private Bitmap artwork;private long artRevision;
     public MusicStatus(Context context){this.context=context.getApplicationContext();HandlerThread thread=new HandlerThread("Ninebot-Music",android.os.Process.THREAD_PRIORITY_BACKGROUND);thread.start();worker=new Handler(thread.getLooper());}
-    /** Whether the last sample had a track that was actually moving; used to decide who owns the volume keys. */
-    public boolean playing(){Bundle b=cached;return b.getBoolean("active")&&MusicPlayback.moving(b.getInt("state"));}
+    /**
+     * Whether a track is actually moving right now; decides who owns the volume keys. The cached sample only refreshes while a
+     * dashboard snapshot is being taken, so once it is stale the sessions are asked directly: a paused player must hand the keys
+     * to the lamp at once, not when the next cast happens to sample it.
+     */
+    public boolean playing(){
+        Bundle b=cached;
+        if(SystemClock.elapsedRealtime()-sampled<=1500)return b.getBoolean("active")&&MusicPlayback.moving(b.getInt("state"));
+        return livePlaying();
+    }
+    private boolean livePlaying(){
+        try{
+            if(!new NotificationPreferences(context).granted())return false;
+            MediaSessionManager manager=context.getSystemService(MediaSessionManager.class);if(manager==null)return false;
+            for(MediaController candidate:manager.getActiveSessions(NotificationPreferences.listener(context))){
+                PlaybackState state=candidate.getPlaybackState();if(state!=null&&MusicPlayback.moving(state.getState()))return true;
+            }
+            return false;
+        }catch(RuntimeException e){return false;}
+    }
     public synchronized Bundle snapshot(long knownArt){
         if(!new NotificationPreferences(context).granted()){worker.post(()->{selected=null;selectedId="";artwork=null;});cached=new Bundle();return new Bundle();}
         long now=SystemClock.elapsedRealtime();
