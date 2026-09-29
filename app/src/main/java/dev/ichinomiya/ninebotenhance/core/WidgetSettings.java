@@ -19,8 +19,8 @@ public record WidgetSettings(int mask,int tyreIntervalSeconds,int voltageInterva
      * only ever read "未连接". Version 7 added the BMS card and the two BMS-first source switches, likewise not inherited.
      */
     public static final int PREFERENCE_VERSION=7;
-    /** Switches that are off in a fresh install: the diagnostic probe, the two optional ride cards and the lamp. */
-    public static final int OFF_BY_DEFAULT=REGISTER_PROBE|SPEED|POWER|LAMP|BMS|VOLTAGE_FROM_BMS|POWER_FROM_BMS;
+    /** A fresh install shows only the voltage, music, tyre, phone and notification cards; every other switch starts off. */
+    public static final int OFF_BY_DEFAULT=REGISTER_PROBE|SPEED|POWER|LAMP|BMS|VOLTAGE_FROM_BMS|POWER_FROM_BMS|VOLUME|HILL_HOLD_DODGE;
     /** Marker inside the order: entries before it form the right column (bottom up), entries after it the left column (bottom up). */
     public static final int COLUMN_DIVIDER=0;
     /** Cards of the two columns; the notification block is one of them and always belongs to the right column. */
