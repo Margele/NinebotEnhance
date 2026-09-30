@@ -116,7 +116,7 @@ public final class EncodingHooks {
         if(!HookPolicy.captureClass(type.getName()))return;
         installOverrides(type);
         boolean config=CaptureConfigReader.videoConfig(type);
-        if(!type.isInterface()&&!type.getName().contains("$"))
+        if(!type.isInterface()&&HookPolicy.captureConstructors(type.getName()))
             for(Constructor<?> constructor:type.getDeclaredConstructors())if(!HookPolicy.twin(constructor))installCapture(constructor,config);
         for(Method method:type.getDeclaredMethods()) {
             String name=method.getName().toLowerCase(Locale.ROOT);

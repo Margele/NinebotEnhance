@@ -20,12 +20,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * toggles on unlocked rows are Ninebot's own writes, and the firmware may ignore a feature it never advertised.
  */
 public final class FeatureHooks {
-    public static final String VIEW_HOLDER="cn.ninebot.library.bluetooth.dynamic.viewHolder.DynamicViewHolder";
-    public static final String VIEW_MODELS="cn.ninebot.device.dynamic.DynamicViewModels$Companion";
+    public static final String VIEW_HOLDER=HookPolicy.VIEW_HOLDER;
+    public static final String VIEW_MODELS=HookPolicy.VIEW_MODELS;
     /** Ninebot's per-vehicle switch for the hard-key card (SharedPreferences, default off); the card hides itself while it is off. */
-    public static final String VISIBILITY_STORE="cn.ninebot.device.motor.manager.HardkeyRemoteControlVisibilityStore";
+    public static final String VISIBILITY_STORE=HookPolicy.VISIBILITY_STORE;
     /** The vehicle-page navigation card; updateCruiseViewState(boolean) shows or hides Ninebot's own cruise button. */
-    public static final String NAVIGATION_CARD="cn.ninebot.device.motor.viewHolder.NavigationCardViewHolder";
+    public static final String NAVIGATION_CARD=HookPolicy.NAVIGATION_CARD;
     /** setDashNaviTheme(boolean isNight, NbBluetoothDevice) lives here; Ninebot calls it with the phone's dark mode. */
     public static final String NAVI_MESSENGER_COMPANION=HookCatalog.NAVI_MESSENGER+"$Companion";
     private final HookHost module;
@@ -33,7 +33,7 @@ public final class FeatureHooks {
     private final Set<Method> hooked=ConcurrentHashMap.newKeySet();
     private final Set<String> reported=ConcurrentHashMap.newKeySet();
     public FeatureHooks(HookHost module,FrameClient frames){this.module=module;this.frames=frames;}
-    public static boolean interesting(String name){return name.equals(VIEW_HOLDER)||name.equals(VIEW_MODELS)||name.equals(VISIBILITY_STORE)||name.equals(NAVIGATION_CARD);}
+    public static boolean interesting(String name){return HookPolicy.featureClass(name);}
     public int hookCount(){return hooked.size();}
     public void inspect(Class<?> type) {
         if(type.getName().equals(VIEW_HOLDER))installVisibility(type);

@@ -8,7 +8,6 @@ import android.media.projection.*;
 import android.net.Uri;
 import android.os.*;
 import android.view.Surface;
-import dev.ichinomiya.ninebotenhance.R;
 import dev.ichinomiya.ninebotenhance.core.CaptureSize;
 import dev.ichinomiya.ninebotenhance.diagnostics.Diagnostics;
 import dev.ichinomiya.ninebotenhance.ipc.Ipc;
