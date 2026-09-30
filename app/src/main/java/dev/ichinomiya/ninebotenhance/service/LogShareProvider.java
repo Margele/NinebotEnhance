@@ -11,7 +11,7 @@ import java.io.*;
 
 /** Not exported. Android grants only the selected log URI to the sharesheet recipient. */
 public final class LogShareProvider extends ContentProvider {
-    public static final String AUTHORITY = Protocol.MODULE + ".logs";
+    public static final String AUTHORITY = dev.ichinomiya.ninebotenhance.ipc.Flavor.AUTHORITY + ".logs";
     private static LogArchive archive;
     static synchronized LogArchive archive(Context context) {
         if (archive == null) {

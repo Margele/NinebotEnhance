@@ -49,7 +49,7 @@ public final class ScreenCaptureService extends Service {
             Intent stop = new Intent(this, ScreenCaptureService.class).setAction(STOP)
                     .setData(Uri.parse("ninebot-enhance://stop-capture/" + id)).putExtra(Protocol.REQUEST, id);
             stopAction = PendingIntent.getService(this, 0, stop, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_ONE_SHOT);
-            Notification notification = new Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_mirror)
+            Notification notification = new Notification.Builder(this, CHANNEL).setSmallIcon(dev.ichinomiya.ninebotenhance.ipc.Flavor.notificationIcon())
                     .setContentTitle("Ninebot Enhance 正在投屏").setContentText("正在分享所选应用或整个屏幕，点击结束")
                     .setOngoing(true).setCategory(Notification.CATEGORY_SERVICE).setContentIntent(stopAction)
                     .addAction(new Notification.Action.Builder(null, "结束投屏", stopAction).build()).build();

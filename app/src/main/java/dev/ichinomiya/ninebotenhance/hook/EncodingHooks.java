@@ -6,7 +6,6 @@ import android.os.Bundle;
 import dev.ichinomiya.ninebotenhance.client.FrameClient;
 import dev.ichinomiya.ninebotenhance.core.EncoderOverride;
 import dev.ichinomiya.ninebotenhance.diagnostics.*;
-import io.github.libxposed.api.XposedModule;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -17,7 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * live bitrate change through MediaCodec.setParameters.
  */
 public final class EncodingHooks {
-    private final XposedModule module;
+    private final HookHost module;
     private final FrameClient frames;
     private final EncodingDiagnostics log;
     private final Set<Executable> hooked=ConcurrentHashMap.newKeySet();
@@ -26,7 +25,7 @@ public final class EncodingHooks {
     private final WeakIdentityMap<EncodingDiagnostics.Session> created=new WeakIdentityMap<>();
     private final WeakIdentityMap<EncodingDiagnostics.Session> captureOwners=new WeakIdentityMap<>();
     private final Map<Object,Boolean> liveCodecs=Collections.synchronizedMap(new WeakHashMap<>());
-    public EncodingHooks(XposedModule module,FrameClient frames) { this.module=module;this.frames=frames;log=frames.encoding();frames.setEncoderOverrideApplier(this::apply); }
+    public EncodingHooks(HookHost module,FrameClient frames) { this.module=module;this.frames=frames;log=frames.encoding();frames.setEncoderOverrideApplier(this::apply); }
 
     public void install() {
         int installed=0;
@@ -118,10 +117,10 @@ public final class EncodingHooks {
         installOverrides(type);
         boolean config=CaptureConfigReader.videoConfig(type);
         if(!type.isInterface()&&!type.getName().contains("$"))
-            for(Constructor<?> constructor:type.getDeclaredConstructors())installCapture(constructor,config);
+            for(Constructor<?> constructor:type.getDeclaredConstructors())if(!HookPolicy.twin(constructor))installCapture(constructor,config);
         for(Method method:type.getDeclaredMethods()) {
             String name=method.getName().toLowerCase(Locale.ROOT);
-            if(!Modifier.isAbstract(method.getModifiers())&&!method.isBridge() && (name.startsWith("create")||name.startsWith("prepare")
+            if(!Modifier.isAbstract(method.getModifiers())&&!method.isBridge()&&!HookPolicy.twin(method) && (name.startsWith("create")||name.startsWith("prepare")
                     ||name.startsWith("configure")||name.startsWith("init")||name.startsWith("start")||name.startsWith("setup")
                     ||name.matches("set.*(width|height|fps|framerate|bitrate|videoconfig)")))installCapture(method,config);
         }

@@ -11,7 +11,7 @@ import java.io.*;
  * shell command.
  */
 public final class PrivilegedLauncher extends Binder {
-    public static final String DESCRIPTOR = Protocol.MODULE + ".PrivilegedLauncher.v1";
+    public static final String DESCRIPTOR = Protocol.NAMESPACE + ".PrivilegedLauncher.v1";
     public static final int START = 1, EXIT_CODE = 2, STOP = 3, FORCE_STOP = 4, DESTROY = 16777115;
     private final int appUid;
     private final String apk;

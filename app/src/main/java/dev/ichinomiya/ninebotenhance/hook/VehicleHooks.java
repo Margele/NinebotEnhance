@@ -9,7 +9,6 @@ import dev.ichinomiya.ninebotenhance.core.RegisterProbe;
 import dev.ichinomiya.ninebotenhance.core.RideState;
 import dev.ichinomiya.ninebotenhance.core.TireTelemetry;
 import dev.ichinomiya.ninebotenhance.core.WidgetSettings;
-import io.github.libxposed.api.XposedModule;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -32,7 +31,7 @@ public final class VehicleHooks {
     public static final long ATTEMPT_INTERVAL_MS=250,REPLY_WATCHDOG_MS=6000,CENSUS_INTERVAL_MS=60000,FRAME_LOG_INTERVAL_MS=30000,CROSS_CHECK_INTERVAL_MS=60000,DISPLAY_PRIORITY_MS=90000;
     /** A command that stays silent twice in a row is not sent again in this session; log volume per session is bounded. */
     public static final int SILENT_LIMIT=2,LOG_SENDS_PER_COMMAND=2,LOG_REPLIES_PER_COMMAND=3,LOG_SILENCE_PER_SESSION=20;
-    private final XposedModule module;private final FrameClient frames;private final BatteryTelemetry battery;private final TireTelemetry tires;private final BooleanSupplier compatible;private final Runnable changed;
+    private final HookHost module;private final FrameClient frames;private final BatteryTelemetry battery;private final TireTelemetry tires;private final BooleanSupplier compatible;private final Runnable changed;
     private final Set<Method> installed=ConcurrentHashMap.newKeySet(),hits=ConcurrentHashMap.newKeySet();
     private final Set<String> failures=ConcurrentHashMap.newKeySet(),logged=ConcurrentHashMap.newKeySet();
     private final Map<String,Method> methods=new ConcurrentHashMap<>();
@@ -98,7 +97,7 @@ public final class VehicleHooks {
     /** Ignition state from bit 0 of the same register (the detail page gates its power-only features on it); null until seen. */
     private volatile Boolean powerOn;
     public Boolean powerOn(){return powerOn;}
-    public VehicleHooks(XposedModule module,FrameClient frames,BooleanSupplier compatible,Runnable changed){
+    public VehicleHooks(HookHost module,FrameClient frames,BooleanSupplier compatible,Runnable changed){
         this.module=module;this.frames=frames;battery=frames.batteryData();tires=frames.tireData();this.compatible=compatible;this.changed=changed;
         HandlerThread thread=new HandlerThread("Ninebot-VehicleRead");thread.start();reader=new Handler(thread.getLooper());
     }

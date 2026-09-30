@@ -4,7 +4,6 @@ import android.media.MediaCodec;
 import android.os.SystemClock;
 import dev.ichinomiya.ninebotenhance.client.FrameClient;
 import dev.ichinomiya.ninebotenhance.diagnostics.*;
-import io.github.libxposed.api.XposedModule;
 import java.lang.reflect.*;
 import java.nio.ByteBuffer;
 import java.util.*;
@@ -22,10 +21,10 @@ public final class StatisticsHooks {
     /** The EncodeListener objects every Ninebot encoder reports into; they live outside the capture package and are only reachable by name. */
     public static final String[] ENCODE_SINKS={"cn.ninebot.screencast.ScreenCastRequest$setListener$2","cn.ninebot.screencast.ScreenCastRequest$createNavigationScreenCast$7",
             "cn.ninebot.mapcapture.DeviceScreenCastRequest$createNavigationScreenCast$2"};
-    private final XposedModule module;
+    private final HookHost module;
     private final FrameClient frames;
     private final Set<Method> hooked=ConcurrentHashMap.newKeySet();
-    public StatisticsHooks(XposedModule module,FrameClient frames){this.module=module;this.frames=frames;}
+    public StatisticsHooks(HookHost module,FrameClient frames){this.module=module;this.frames=frames;}
     public static boolean interesting(String name){
         if(name.equals(BLE_SENDER)||name.equals(NB_BLE_SENDER)||name.equals(WIFI_SENDER)||name.equals(FRAME_SENDER)||name.equals(SEND_QUEUE)||name.equals(UDP_SESSION)||name.equals(BLE_WRITER))return true;
         for(String sink:ENCODE_SINKS)if(name.equals(sink))return true;

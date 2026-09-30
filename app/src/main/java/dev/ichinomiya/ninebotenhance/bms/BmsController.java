@@ -62,7 +62,7 @@ public final class BmsController {
     // ---------------------------------------------------------------- settings
     private BmsSettings read(){
         try{
-            android.content.SharedPreferences p=context.getSharedPreferences(Protocol.MODULE+".bms",Context.MODE_PRIVATE);
+            android.content.SharedPreferences p=context.getSharedPreferences(Protocol.NAMESPACE+".bms",Context.MODE_PRIVATE);
             return new BmsSettings(p.getString("mac",""),p.getInt("poll_ms",BmsSettings.DEFAULT_POLL_MS),
                     p.getInt("protocol",BmsSettings.PROTOCOL_DL),p.getBoolean("prefer_bms",false));
         }catch(RuntimeException e){return BmsSettings.NONE;}
@@ -70,7 +70,7 @@ public final class BmsController {
     public BmsSettings settings(){return settings;}
     public void save(BmsSettings value){
         BmsSettings previous=settings;settings=value;
-        try{context.getSharedPreferences(Protocol.MODULE+".bms",Context.MODE_PRIVATE).edit().putString("mac",value.mac())
+        try{context.getSharedPreferences(Protocol.NAMESPACE+".bms",Context.MODE_PRIVATE).edit().putString("mac",value.mac())
                 .putInt("poll_ms",value.pollMs()).putInt("protocol",value.protocol()).putBoolean("prefer_bms",value.preferBms()).apply();}
         catch(RuntimeException ignored){}
         boolean identity=!previous.mac().equals(value.mac())||previous.protocol()!=value.protocol();

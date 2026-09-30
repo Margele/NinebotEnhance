@@ -17,7 +17,7 @@ import dev.ichinomiya.ninebotenhance.navi.NaviHub;
  * publish navigation state or a log line; nothing here touches capture, root or the vehicle.
  */
 public final class NaviContentProvider extends ContentProvider {
-    public static final String AUTHORITY="dev.ichinomiya.ninebotenhance.navi";
+    public static final String AUTHORITY=dev.ichinomiya.ninebotenhance.ipc.Flavor.AUTHORITY+".navi";
     public static final String METHOD_PUBLISH="publish",METHOD_REPORT="report",METHOD_SNAPSHOT="snapshot";
     @Override public boolean onCreate(){return true;}
     @Override public Bundle call(String method,String arg,Bundle extras){

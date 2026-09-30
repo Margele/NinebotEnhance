@@ -79,7 +79,7 @@ public final class LampController {
     // ---------------------------------------------------------------- settings
     private LampSettings read(){
         try{
-            android.content.SharedPreferences p=context.getSharedPreferences(Protocol.MODULE+".lamp",Context.MODE_PRIVATE);
+            android.content.SharedPreferences p=context.getSharedPreferences(Protocol.NAMESPACE+".lamp",Context.MODE_PRIVATE);
             tracked=p.getInt("position",-1);
             return new LampSettings(p.getString("mac",""),p.getString("password",""),
                     p.getInt("speed",LampSettings.DEFAULT_SPEED),p.getInt("steps",LampSettings.DEFAULT_STEPS),
@@ -89,7 +89,7 @@ public final class LampController {
     }
     private void remember(int position){
         tracked=position;
-        try{context.getSharedPreferences(Protocol.MODULE+".lamp",Context.MODE_PRIVATE).edit().putInt("position",position).apply();}catch(RuntimeException ignored){}
+        try{context.getSharedPreferences(Protocol.NAMESPACE+".lamp",Context.MODE_PRIVATE).edit().putInt("position",position).apply();}catch(RuntimeException ignored){}
     }
     public LampSettings settings(){return settings;}
     /** Saving a different device, kind or password drops the current link so the next hold authenticates afresh. */
@@ -97,7 +97,7 @@ public final class LampController {
         LampSettings previous=settings;settings=value;
         boolean identity=!previous.mac().equals(value.mac())||!previous.password().equals(value.password())||previous.kind()!=value.kind();
         try{
-            android.content.SharedPreferences.Editor editor=context.getSharedPreferences(Protocol.MODULE+".lamp",Context.MODE_PRIVATE).edit()
+            android.content.SharedPreferences.Editor editor=context.getSharedPreferences(Protocol.NAMESPACE+".lamp",Context.MODE_PRIVATE).edit()
                     .putString("mac",value.mac()).putString("password",value.password())
                     .putInt("speed",value.speed()).putInt("steps",value.steps())
                     .putBoolean("reversed",value.reversed()).putBoolean("volume_control",value.volumeControl())

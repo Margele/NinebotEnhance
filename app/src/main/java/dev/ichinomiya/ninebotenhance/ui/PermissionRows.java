@@ -17,6 +17,7 @@ import android.widget.Toast;
 import dev.ichinomiya.ninebotenhance.core.PictureSource;
 import dev.ichinomiya.ninebotenhance.core.PrivilegeMode;
 import dev.ichinomiya.ninebotenhance.core.TouchPanel;
+import dev.ichinomiya.ninebotenhance.ipc.Flavor;
 import dev.ichinomiya.ninebotenhance.ipc.Protocol;
 import dev.ichinomiya.ninebotenhance.notification.NotificationPreferences;
 import dev.ichinomiya.ninebotenhance.platform.BlePermissions;
@@ -55,7 +56,8 @@ final class PermissionRows {
         row("电话状态", phone ? "已授权" : "未授权", phone ? State.OK : State.MISSING,
                 "手机状态卡片的信号格数和网络制式", phone ? null : () -> activity.requestPermissions(new String[]{Manifest.permission.READ_PHONE_STATE}, REQUEST_PHONE));
         privilegeRow();
-        row("自启动", "需手动确认", State.NEUTRAL, "九号进程要能拉起模块服务，HyperOS / ColorOS 等系统需允许自启动", () -> AutostartPages.open(activity, null));
+        // A patched Ninebot starts the module service inside its own package; no autostart gate applies.
+        if (!Flavor.EMBEDDED) row("自启动", "需手动确认", State.NEUTRAL, "九号进程要能拉起模块服务，HyperOS / ColorOS 等系统需允许自启动", () -> AutostartPages.open(activity, null));
         touchRow();
         if (!all) return;
         row("屏幕录制", "每次投屏时授权", State.NEUTRAL, "画面提供方式为「投屏」时用系统录屏采集画面", null);
@@ -70,7 +72,9 @@ final class PermissionRows {
         try { boundAt = activity.getSharedPreferences(FrameBridgeService.STATUS_PREFERENCES, Context.MODE_PRIVATE).getLong(FrameBridgeService.BOUND_AT, 0); } catch (RuntimeException ignored) {}
         boolean installed = activity.getPackageManager().getLaunchIntentForPackage(Protocol.TARGET) != null;
         String status = !installed ? "未安装九号出行" : boundAt > 0 ? "九号已连接，" + ago(boundAt) : "九号尚未连接";
-        row("LSPosed 模块", status, boundAt > 0 ? State.OK : State.MISSING,
+        if (Flavor.EMBEDDED) row("内置模块", status, boundAt > 0 ? State.OK : State.MISSING,
+                "模块已打进九号出行安装包，九号启动时连接模块", boundAt == 0 ? this::openNinebot : null);
+        else row("LSPosed 模块", status, boundAt > 0 ? State.OK : State.MISSING,
                 "在 LSPosed 启用模块并勾选九号出行，九号启动时连接模块", installed && boundAt == 0 ? this::openNinebot : null);
     }
     private void privilegeRow() {

@@ -17,7 +17,7 @@ public final class AboutDialog {
         MirrorUi theme = new MirrorUi(activity, reference);
         LinearLayout content = new LinearLayout(activity); content.setOrientation(LinearLayout.VERTICAL);
         content.addView(DialogContent.text(activity, theme, "Ninebot Enhance", 24));
-        TextView version = DialogContent.text(activity, theme, "版本 " + Protocol.VERSION + "\n" + Protocol.MODULE, 13);
+        TextView version = DialogContent.text(activity, theme, "版本 " + Protocol.VERSION + "\n" + Protocol.NAMESPACE, 13);
         version.setTextColor(theme.secondary); content.addView(version);
         CheckBox debug = new CheckBox(activity); debug.setText("调试模式"); debug.setTextSize(15);
         debug.setTextColor(theme.text);

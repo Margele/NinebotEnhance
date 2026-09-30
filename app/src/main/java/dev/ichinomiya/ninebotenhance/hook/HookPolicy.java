@@ -36,5 +36,16 @@ public final class HookPolicy {
         return className.equals("cn.ninebot.mapcapture.DeviceScreenCastManager")
                 && (method.equals("stop") || method.equals("stopScreenCast") || method.equals("stopCapture") || method.equals("release"));
     }
+    /**
+     * A patched Ninebot APK keeps the original body of each wrapped method under this suffix, and of each wrapped constructor behind
+     * a trailing marker parameter; neither is a hook target.
+     */
+    public static final String TWIN_SUFFIX = "$$ne", TWIN_MARKER = "dev.ichinomiya.ninebotenhance.embedded.Twin";
+    public static boolean twin(java.lang.reflect.Executable executable) {
+        if (!executable.isSynthetic()) return false;
+        if (executable instanceof java.lang.reflect.Method) return executable.getName().endsWith(TWIN_SUFFIX);
+        Class<?>[] types = executable.getParameterTypes();
+        return types.length > 0 && types[types.length - 1].getName().equals(TWIN_MARKER);
+    }
     private HookPolicy() {}
 }

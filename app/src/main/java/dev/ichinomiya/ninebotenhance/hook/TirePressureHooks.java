@@ -4,7 +4,6 @@ import android.os.SystemClock;
 import dev.ichinomiya.ninebotenhance.client.FrameClient;
 import dev.ichinomiya.ninebotenhance.core.TireTelemetry;
 import dev.ichinomiya.ninebotenhance.diagnostics.WeakIdentityMap;
-import io.github.libxposed.api.XposedModule;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -14,7 +13,7 @@ import java.util.function.BooleanSupplier;
 public final class TirePressureHooks {
     public static final String PARSER=HookCatalog.TYRE_PARSER;
     public static final String MANAGER=HookCatalog.DEVICE_MANAGER;
-    private final XposedModule module;private final FrameClient frames;private final TireTelemetry tires;private final BooleanSupplier compatible;private final Runnable changed;
+    private final HookHost module;private final FrameClient frames;private final TireTelemetry tires;private final BooleanSupplier compatible;private final Runnable changed;
     private final Set<Method> installed=ConcurrentHashMap.newKeySet(),hits=ConcurrentHashMap.newKeySet();
     private final Set<String> failures=ConcurrentHashMap.newKeySet();
     private final WeakIdentityMap<String> owners=new WeakIdentityMap<>();
@@ -24,7 +23,7 @@ public final class TirePressureHooks {
         final Object parser;final String vehicle;final Float[] fields=new Float[4];
         Packet(Object parser,String vehicle){this.parser=parser;this.vehicle=vehicle;}
     }
-    public TirePressureHooks(XposedModule module,FrameClient frames,BooleanSupplier compatible,Runnable changed){this.module=module;this.frames=frames;tires=frames.tireData();this.compatible=compatible;this.changed=changed;}
+    public TirePressureHooks(HookHost module,FrameClient frames,BooleanSupplier compatible,Runnable changed){this.module=module;this.frames=frames;tires=frames.tireData();this.compatible=compatible;this.changed=changed;}
     public int hookCount(){return installed.size();}
     public int hitCount(){return hits.size();}
     public static boolean interesting(String name){return PARSER.equals(name)||MANAGER.equals(name);}

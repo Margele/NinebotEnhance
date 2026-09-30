@@ -257,7 +257,7 @@ public final class FrameClient {
             // all start hidden and off, whatever an earlier run left behind.
             debugMode.restore(false, false);
             try {
-                SharedPreferences saved=context.getSharedPreferences(Protocol.MODULE+".widgets",Context.MODE_PRIVATE);
+                SharedPreferences saved=context.getSharedPreferences(Protocol.NAMESPACE+".widgets",Context.MODE_PRIVATE);
                 widgets=WidgetSettings.migrate(saved.getInt("version",1),saved.getInt("mask",WidgetSettings.ALL),saved.getInt("tyre_interval",WidgetSettings.DEFAULT_TYRE_SECONDS),saved.getInt("voltage_interval_ms",saved.getInt("voltage_interval",1)*1000),saved.getInt("music_hide",WidgetSettings.DEFAULT_MUSIC_HIDE_SECONDS),saved.getInt("chart_seconds",WidgetSettings.DEFAULT_CHART_SECONDS),saved.getInt("hold_power",WidgetSettings.DEFAULT_HOLD_POWER),saved.getInt("hold_speed",WidgetSettings.DEFAULT_HOLD_SPEED),saved.getInt("speed_interval_ms",saved.getInt("speed_interval",1)*1000),saved.getInt("power_interval_ms",saved.getInt("power_interval",1)*1000),saved.getInt("hold_power_max",WidgetSettings.DEFAULT_HOLD_POWER_MAX),saved.getInt("hold_seconds",WidgetSettings.DEFAULT_HOLD_SECONDS),saved.getInt("speed_chart_seconds",WidgetSettings.DEFAULT_CHART_SECONDS),saved.getInt("power_chart_seconds",WidgetSettings.DEFAULT_CHART_SECONDS),WidgetSettings.parseOrder(saved.getString("widget_order","")),loadConditions(saved));
                 widgets=widgets.with(WidgetSettings.REGISTER_PROBE,false);
                 hud.setWidgets(widgets);
@@ -315,7 +315,7 @@ public final class FrameClient {
     public BmsCard.Layout bmsLayout(){return bmsLayout;}
     public void saveBmsLayout(BmsCard.Layout value){
         bmsLayout=value;hud.setBmsLayout(value);
-        if(context!=null)context.getSharedPreferences(Protocol.MODULE+".widgets",Context.MODE_PRIVATE).edit().putString("bms_layout",value.encode()).apply();
+        if(context!=null)context.getSharedPreferences(Protocol.NAMESPACE+".widgets",Context.MODE_PRIVATE).edit().putString("bms_layout",value.encode()).apply();
         report("BMS layout "+value.encode());View preview=inlinePreview.get();if(preview!=null)preview.postInvalidateOnAnimation();
     }
     public void setNaviLive(java.util.function.BiConsumer<String, NaviUpdate> pulse) { naviLivePulse = pulse; }
@@ -325,7 +325,7 @@ public final class FrameClient {
     public NaviUpdate liveNavi(){NaviUpdate u=liveNavi;return u!=null&&u.fresh(SystemClock.elapsedRealtime())?u:null;}
     public void saveNaviLive(boolean value){
         naviLive=value;
-        if(context!=null)context.getSharedPreferences(Protocol.MODULE+".widgets",Context.MODE_PRIVATE).edit().putBoolean("navi_live",value).apply();
+        if(context!=null)context.getSharedPreferences(Protocol.NAMESPACE+".widgets",Context.MODE_PRIVATE).edit().putBoolean("navi_live",value).apply();
         report("NAVI live switch "+(value?"on":"off"));
     }
     public void saveNaviTest(boolean value){
@@ -333,16 +333,16 @@ public final class FrameClient {
         report("NAVITEST switch "+(value?"on":"off"));
     }
     /** The one-time open-source sentence lives with the other host-side settings, so it is asked once per Ninebot install. */
-    public boolean noticeAccepted(){return context!=null&&context.getSharedPreferences(Protocol.MODULE+".widgets",Context.MODE_PRIVATE).getBoolean(dev.ichinomiya.ninebotenhance.core.OpenSourceNotice.KEY,false);}
+    public boolean noticeAccepted(){return context!=null&&context.getSharedPreferences(Protocol.NAMESPACE+".widgets",Context.MODE_PRIVATE).getBoolean(dev.ichinomiya.ninebotenhance.core.OpenSourceNotice.KEY,false);}
     public void saveNoticeAccepted(){
-        if(context!=null)context.getSharedPreferences(Protocol.MODULE+".widgets",Context.MODE_PRIVATE).edit().putBoolean(dev.ichinomiya.ninebotenhance.core.OpenSourceNotice.KEY,true).apply();
+        if(context!=null)context.getSharedPreferences(Protocol.NAMESPACE+".widgets",Context.MODE_PRIVATE).edit().putBoolean(dev.ichinomiya.ninebotenhance.core.OpenSourceNotice.KEY,true).apply();
         report("NOTICE accepted");
     }
     public WidgetSettings widgetSettings(){return widgets;}
     public boolean dashboardDark(){return dashboardDark;}
     public void toggleDashboardTheme(){
         boolean dark=!dashboardDark;dashboardDark=dark;hud.setDark(dark);
-        if(context!=null)context.getSharedPreferences(Protocol.MODULE+".widgets",Context.MODE_PRIVATE).edit().putBoolean("dashboard_dark",dark).apply();
+        if(context!=null)context.getSharedPreferences(Protocol.NAMESPACE+".widgets",Context.MODE_PRIVATE).edit().putBoolean("dashboard_dark",dark).apply();
         report("THEME "+(dark?"dark":"light"));
         if(casting)themeSender.accept(battery.selectedKey(),dark);
         View preview=inlinePreview.get();if(preview!=null)preview.postInvalidateOnAnimation();
@@ -353,7 +353,7 @@ public final class FrameClient {
     public HiddenFeatures hiddenFeatures(){return hiddenFeatures;}
     public void saveHiddenFeatures(HiddenFeatures value){
         hiddenFeatures=value;
-        if(context!=null)context.getSharedPreferences(Protocol.MODULE+".widgets",Context.MODE_PRIVATE).edit().putBoolean("unhide_throttle",value.throttle()).putBoolean("unhide_hardkey",value.hardkey()).putBoolean("unhide_cruise",value.cruise()).apply();
+        if(context!=null)context.getSharedPreferences(Protocol.NAMESPACE+".widgets",Context.MODE_PRIVATE).edit().putBoolean("unhide_throttle",value.throttle()).putBoolean("unhide_hardkey",value.hardkey()).putBoolean("unhide_cruise",value.cruise()).apply();
         report("FEATURE saved "+value.describe());
         main.post(dynamicPageListener);
     }
@@ -380,7 +380,7 @@ public final class FrameClient {
     public void setEncoderOverrideApplier(java.util.function.Consumer<EncoderOverride> applier){overrideApplier=applier;}
     public void saveEncoderOverride(EncoderOverride value){
         encoderOverride=value;
-        if(context!=null)context.getSharedPreferences(Protocol.MODULE+".widgets",Context.MODE_PRIVATE).edit().putInt("encoder_bitrate_kbps",value.bitrateKbps()).putInt("encoder_fps",value.fps()).putBoolean("preview_stats",value.previewStats()).putInt("encoder_frame_width",value.frameWidth()).putInt("encoder_frame_height",value.frameHeight()).apply();
+        if(context!=null)context.getSharedPreferences(Protocol.NAMESPACE+".widgets",Context.MODE_PRIVATE).edit().putInt("encoder_bitrate_kbps",value.bitrateKbps()).putInt("encoder_fps",value.fps()).putBoolean("preview_stats",value.previewStats()).putInt("encoder_frame_width",value.frameWidth()).putInt("encoder_frame_height",value.frameHeight()).apply();
         report("OVERRIDE saved "+value.describe());
         try{overrideApplier.accept(value);}catch(RuntimeException e){report("OVERRIDE apply "+Ipc.error(e));}
         View preview=inlinePreview.get();if(preview!=null)preview.postInvalidateOnAnimation();
@@ -392,10 +392,10 @@ public final class FrameClient {
     /** Debug register probe: the value table drawn by the HUD and the registers the vehicle hooks poll. */
     public RegisterProbe registerProbe(){return probe;}
     public java.util.Set<String> probeSelection(){return probeSelection;}
-    public void saveProbeSelection(java.util.Set<String> names){if(context==null)return;java.util.Set<String> copy=new java.util.LinkedHashSet<>(names);context.getSharedPreferences(Protocol.MODULE+".widgets",Context.MODE_PRIVATE).edit().putStringSet("probe_registers",copy).apply();probeSelection=copy;}
+    public void saveProbeSelection(java.util.Set<String> names){if(context==null)return;java.util.Set<String> copy=new java.util.LinkedHashSet<>(names);context.getSharedPreferences(Protocol.NAMESPACE+".widgets",Context.MODE_PRIVATE).edit().putStringSet("probe_registers",copy).apply();probeSelection=copy;}
     /** Boards whose full index range the probe reads through injected commands; empty by default. */
     public java.util.Set<String> probeRawModules(){return probeRawModules;}
-    public void saveProbeRawModules(java.util.Set<String> modules){if(context==null)return;java.util.Set<String> copy=new java.util.LinkedHashSet<>(modules);context.getSharedPreferences(Protocol.MODULE+".widgets",Context.MODE_PRIVATE).edit().putStringSet("probe_raw_modules",copy).apply();probeRawModules=copy;}
+    public void saveProbeRawModules(java.util.Set<String> modules){if(context==null)return;java.util.Set<String> copy=new java.util.LinkedHashSet<>(modules);context.getSharedPreferences(Protocol.NAMESPACE+".widgets",Context.MODE_PRIVATE).edit().putStringSet("probe_raw_modules",copy).apply();probeRawModules=copy;}
     /** Outcome of the hook catalog check, filled once the target application is attached. */
     public String compatibility(){return compatibility;}
     private volatile String targetVersion="";private volatile boolean versionTested=true;
@@ -411,7 +411,7 @@ public final class FrameClient {
     }
     public void saveWidgetSettings(WidgetSettings settings){
         if(context==null)return;
-        SharedPreferences.Editor editor=context.getSharedPreferences(Protocol.MODULE+".widgets",Context.MODE_PRIVATE).edit().putInt("version",WidgetSettings.PREFERENCE_VERSION).putInt("mask",settings.mask()).putInt("tyre_interval",settings.tyreIntervalSeconds()).putInt("voltage_interval_ms",settings.voltageIntervalMs()).putInt("music_hide",settings.musicHideSeconds()).putInt("chart_seconds",settings.chartSeconds()).putInt("hold_power",settings.holdPowerMin()).putInt("hold_speed",settings.holdSpeedMax()).putInt("speed_interval_ms",settings.speedIntervalMs()).putInt("power_interval_ms",settings.powerIntervalMs()).putInt("hold_power_max",settings.holdPowerMax()).putInt("hold_seconds",settings.holdSeconds()).putInt("speed_chart_seconds",settings.speedChartSeconds()).putInt("power_chart_seconds",settings.powerChartSeconds()).putString("widget_order",settings.encodeOrder());
+        SharedPreferences.Editor editor=context.getSharedPreferences(Protocol.NAMESPACE+".widgets",Context.MODE_PRIVATE).edit().putInt("version",WidgetSettings.PREFERENCE_VERSION).putInt("mask",settings.mask()).putInt("tyre_interval",settings.tyreIntervalSeconds()).putInt("voltage_interval_ms",settings.voltageIntervalMs()).putInt("music_hide",settings.musicHideSeconds()).putInt("chart_seconds",settings.chartSeconds()).putInt("hold_power",settings.holdPowerMin()).putInt("hold_speed",settings.holdSpeedMax()).putInt("speed_interval_ms",settings.speedIntervalMs()).putInt("power_interval_ms",settings.powerIntervalMs()).putInt("hold_power_max",settings.holdPowerMax()).putInt("hold_seconds",settings.holdSeconds()).putInt("speed_chart_seconds",settings.speedChartSeconds()).putInt("power_chart_seconds",settings.powerChartSeconds()).putString("widget_order",settings.encodeOrder());
         for(int w:WidgetSettings.CONDITIONAL){WidgetCondition c=settings.conditions().get(w);if(c==null)editor.remove("condition_"+w);else editor.putString("condition_"+w,c.encode());}
         editor.apply();
         widgets=settings;hud.setWidgets(settings);View preview=inlinePreview.get();if(preview!=null)preview.postInvalidateOnAnimation();
@@ -1035,7 +1035,7 @@ public final class FrameClient {
     public void saveDrawSettings(DrawSettings value) {
         drawSettings = value;
         try {
-            if (context != null) context.getSharedPreferences(Protocol.MODULE + ".widgets", Context.MODE_PRIVATE).edit().putInt("draw_max_speed", value.maxSpeed())
+            if (context != null) context.getSharedPreferences(Protocol.NAMESPACE+".widgets", Context.MODE_PRIVATE).edit().putInt("draw_max_speed", value.maxSpeed())
                     .putInt("draw_field_1", value.first()).putInt("draw_field_2", value.second()).putInt("draw_field_3", value.third()).apply();
         } catch (RuntimeException e) { report("DRAW settings save " + Ipc.error(e)); }
         report("DRAW settings " + value.label());

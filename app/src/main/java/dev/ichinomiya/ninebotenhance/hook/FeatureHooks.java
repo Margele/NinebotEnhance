@@ -3,7 +3,6 @@ package dev.ichinomiya.ninebotenhance.hook;
 import android.view.ViewGroup;
 import dev.ichinomiya.ninebotenhance.client.FrameClient;
 import dev.ichinomiya.ninebotenhance.core.HiddenFeatures;
-import io.github.libxposed.api.XposedModule;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,11 +28,11 @@ public final class FeatureHooks {
     public static final String NAVIGATION_CARD="cn.ninebot.device.motor.viewHolder.NavigationCardViewHolder";
     /** setDashNaviTheme(boolean isNight, NbBluetoothDevice) lives here; Ninebot calls it with the phone's dark mode. */
     public static final String NAVI_MESSENGER_COMPANION=HookCatalog.NAVI_MESSENGER+"$Companion";
-    private final XposedModule module;
+    private final HookHost module;
     private final FrameClient frames;
     private final Set<Method> hooked=ConcurrentHashMap.newKeySet();
     private final Set<String> reported=ConcurrentHashMap.newKeySet();
-    public FeatureHooks(XposedModule module,FrameClient frames){this.module=module;this.frames=frames;}
+    public FeatureHooks(HookHost module,FrameClient frames){this.module=module;this.frames=frames;}
     public static boolean interesting(String name){return name.equals(VIEW_HOLDER)||name.equals(VIEW_MODELS)||name.equals(VISIBILITY_STORE)||name.equals(NAVIGATION_CARD);}
     public int hookCount(){return hooked.size();}
     public void inspect(Class<?> type) {

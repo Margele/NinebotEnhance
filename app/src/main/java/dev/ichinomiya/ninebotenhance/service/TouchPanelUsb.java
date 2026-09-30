@@ -17,7 +17,7 @@ import java.util.function.Consumer;
  * to this application once the user allows it, which works without Root and without Shizuku. Nothing is written to the device.
  */
 public final class TouchPanelUsb {
-    public static final String ACTION = Protocol.MODULE + ".USB_PANEL";
+    public static final String ACTION = Protocol.NAMESPACE + ".USB_PANEL";
     private static final int REQUEST = 806;
     private static UsbDeviceConnection held;
     private static BroadcastReceiver pending;

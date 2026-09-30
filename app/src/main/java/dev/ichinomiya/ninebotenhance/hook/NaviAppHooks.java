@@ -12,7 +12,6 @@ import dev.ichinomiya.ninebotenhance.core.NaviDestination;
 import dev.ichinomiya.ninebotenhance.core.NaviUpdate;
 import dev.ichinomiya.ninebotenhance.navi.NaviAppClient;
 import dev.ichinomiya.ninebotenhance.navi.NaviApps;
-import io.github.libxposed.api.XposedModule;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -43,7 +42,7 @@ public final class NaviAppHooks {
     /** Car callbacks (turn icon, road signs, segment distance, remaining time / distance) and the base callback they extend. */
     public static final String TENCENT_CALLBACK="com.tencent.map.navisdk.api.adapt.TNaviCarCallback",TENCENT_BASE_CALLBACK="com.tencent.map.navisdk.api.adapt.TNaviCallback";
     public static final long CENSUS_INTERVAL_MS=60000,REGISTER_RETRY_MS=3000;public static final int REGISTER_ATTEMPTS=60;
-    private final XposedModule module;private final String pkg;private final NaviAppClient client;
+    private final HookHost module;private final String pkg;private final NaviAppClient client;
     private final Set<Executable> hooked=ConcurrentHashMap.newKeySet();private final Set<Class<?>> seen=ConcurrentHashMap.newKeySet();
     private final Set<String> logged=ConcurrentHashMap.newKeySet();
     private final EventCensus census=new EventCensus();
@@ -57,7 +56,7 @@ public final class NaviAppHooks {
     private volatile int scene;
     private volatile long lastCensus;
     private final boolean mainProcess;
-    public NaviAppHooks(XposedModule module,String pkg,String process){this.module=module;this.pkg=pkg;client=new NaviAppClient(process==null?pkg:process);mainProcess=process==null||process.equals(pkg);}
+    public NaviAppHooks(HookHost module,String pkg,String process){this.module=module;this.pkg=pkg;client=new NaviAppClient(process==null?pkg:process);mainProcess=process==null||process.equals(pkg);}
     public String label(){return NaviApps.label(pkg);}
     public void install(ClassLoader loader){
         if(loader!=null)loaders.add(loader);

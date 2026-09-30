@@ -50,7 +50,7 @@ public final class ServiceBridge {
         Context c = context; if (c == null) return;
         new Thread(() -> {
             try {
-                Bundle r = c.getContentResolver().call(android.net.Uri.parse("content://" + Protocol.MODULE + ".root"), "ping", null, null);
+                Bundle r = c.getContentResolver().call(android.net.Uri.parse("content://" + Protocol.ROOT_AUTHORITY), "ping", null, null);
                 log.accept("BRIDGE wake ping " + (r == null ? "no answer" : "pid=" + r.getInt("pid") + " version=" + r.getString("version")));
                 if (r != null) main.post(() -> { if (!connected()) { nextAttemptAt = 0; rotate(); } });
             } catch (RuntimeException e) { log.accept("BRIDGE wake ping failed " + Ipc.error(e)); }

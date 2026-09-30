@@ -7,8 +7,8 @@ import java.util.Map;
  * reduced to the tag and the page to open. The module never downloads anything; the user is only pointed at the Releases page.
  */
 public final class UpdateCheck {
-    public static final String RELEASES_URL = OpenSourceNotice.REPOSITORY + "/releases";
-    public static final String LATEST_API = "https://api.github.com/repos/Margele/NinebotEnhance/releases/latest";
+    public static final String RELEASES_URL = dev.ichinomiya.ninebotenhance.ipc.Flavor.RELEASES_URL;
+    public static final String LATEST_API = dev.ichinomiya.ninebotenhance.ipc.Flavor.LATEST_API;
     /** How often the module asks GitHub at most; a failed attempt waits an hour before the next. */
     public static final long INTERVAL_MS = 6 * 3_600_000L, RETRY_MS = 3_600_000L;
     public record Release(String version, String url) {}

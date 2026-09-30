@@ -5,8 +5,10 @@ public final class Protocol {
     public static final int VERSION_CODE = 52;
     public static final String DISPLAY_NAME = "Ninebot Enhance Display";
     public static final String DAEMON_CLASS = "dev.ichinomiya.ninebotenhance.display.RootDisplayMain";
-    public static final String MODULE = "dev.ichinomiya.ninebotenhance", TARGET = "cn.ninebot.ninebot";
-    public static final String DESCRIPTOR = MODULE + ".VirtualDisplay.v6", ROOT_AUTHORITY = MODULE + ".root";
+    /** Names of preferences, Binder descriptors and actions; the same in every build. */
+    public static final String NAMESPACE = "dev.ichinomiya.ninebotenhance";
+    public static final String MODULE = Flavor.MODULE, TARGET = "cn.ninebot.ninebot";
+    public static final String DESCRIPTOR = NAMESPACE + ".VirtualDisplay.v6", ROOT_AUTHORITY = Flavor.AUTHORITY + ".root";
     public static final String REQUEST = "mirror_request", TAG = "NinebotEnhance";
     public static final int READ = 1, REPORT = 2, STOP_DIRECT = 3, BEGIN = 4, SETTINGS = 5, LOG = 6;
     public static final int UI_BACK = 8, UI_INPUT = 9, UI_RESTART_APP = 10, APP_ICON = 11;
