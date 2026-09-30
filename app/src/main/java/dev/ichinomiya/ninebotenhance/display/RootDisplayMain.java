@@ -220,7 +220,7 @@ public final class RootDisplayMain {
         }
         Bundle ready = new Bundle(); ready.putBinder("root", endpoint); ready.putInt("displayId", displayId);
         ready.putString(Protocol.APP_LAYOUT_POLICY, appLayoutPolicy); providerCall("ready", ready);
-        launch(selectedApp);
+        launch(selectedApp, true);
         appRecovery.started(SystemClock.elapsedRealtime()); main.post(appWatch);
         System.out.println("VD ready id=" + displayId + " " + settings.label());
     }
@@ -327,15 +327,17 @@ public final class RootDisplayMain {
         try { cancel.setAction(MotionEvent.ACTION_CANCEL); sendInput(cancel); }
         finally { cancel.recycle(); }
     }
-    private void launch(ComponentName component) throws Exception {
+    /** {@code fresh}: the display was just created, so the app is force-stopped first and starts on it with a process of its own. */
+    private void launch(ComponentName component, boolean fresh) throws Exception {
         if (displayId <= 0) throw new IllegalStateException("虚拟屏已关闭");
         if (displayOrientation != null) try { displayOrientation.apply(); }
         catch (Exception e) { log("ORIENTATION before launch " + Ipc.error(e)); }
         Intent intent = AppCatalog.launchIntent(context.getPackageManager(), component);
         // The reference uses NEW_TASK only. MULTIPLE_TASK can select a different app initialization path.
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        // Asked before the launch: moving the task relaunches the app and ends the phone navigation.
+        // Asked before the app is stopped or moved: either ends the phone navigation.
         String resume = navigationResume(component.getPackageName());
+        if (fresh) forceStop(component.getPackageName());
         int result = startOnDisplay(intent);
         if (result < 0) throw new IllegalStateException("应用无法在虚拟屏启动，系统返回 " + result);
         log("LAUNCH id=" + displayId + " entry=" + intent.getComponent().flattenToShortString()
@@ -347,6 +349,16 @@ public final class RootDisplayMain {
         for (long delay : new long[]{800, 3500}) main.postDelayed(() -> {
             if (!stopped.get() && launchGeneration == generation) logDisplayState();
         }, delay);
+    }
+    /**
+     * An app already running on the phone keeps the phone's density in its process when its task moves to the virtual display,
+     * and lays out wrongly there. Stopped first, it starts on the display from scratch. A refusal only costs that: the launch goes on.
+     */
+    private void forceStop(String pkg) {
+        try {
+            Class.forName("android.app.IActivityManager").getMethod("forceStopPackage", String.class, int.class).invoke(activityManager, pkg, moduleUid / 100000);
+            log("APP force-stopped before the launch package=" + pkg);
+        } catch (Exception e) { log("APP force-stop unavailable: " + Ipc.error(e)); }
     }
     private int startOnDisplay(Intent intent) throws Exception {
         Bundle options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId).toBundle();
@@ -450,7 +462,7 @@ public final class RootDisplayMain {
             if (displayOccupied()) { appRecovery.sample(SystemClock.elapsedRealtime(), true); recoveryDetail = ""; return; }
             if (!appRecovery.restart(SystemClock.elapsedRealtime())) return;
             recoveryDetail = ""; publishAppRecovery(); cancelTouch();
-            launch(selectedApp);
+            launch(selectedApp, false);
             log("APP RESTART requested id=" + displayId + " package=" + selectedApp.getPackageName());
         } catch (Exception e) {
             appRecovery.failed(); recoveryDetail = "重新启动失败：" + Ipc.error(e); log("APP RESTART " + recoveryDetail);
