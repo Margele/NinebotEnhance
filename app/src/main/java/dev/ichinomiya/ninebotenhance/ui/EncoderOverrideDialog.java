@@ -15,7 +15,8 @@ import dev.ichinomiya.ninebotenhance.core.SidebarLayout;
 /**
  * Overrides: preview statistics, encoder bitrate and frame rate, the composed frame size, the virtual display size and density
  * (shape defaults apply while unchecked), the two background colours, keep-DPI and compat scaling. Labels only, no explanatory copy.
- * The display part is saved with the display settings and needs an idle session; the encoder part applies at once.
+ * The display part is saved with the display settings and needs an idle session, except compat scaling, which is stored at once
+ * for the next session; the encoder part applies at once.
  */
 public final class EncoderOverrideDialog {
     private static final int STEP=EncoderOverride.BITRATE_STEP_KBPS;
@@ -67,7 +68,8 @@ public final class EncoderOverrideDialog {
         ((LinearLayout.LayoutParams)keepDpi.getLayoutParams()).width=0;((LinearLayout.LayoutParams)keepDpi.getLayoutParams()).weight=1;
         ((LinearLayout.LayoutParams)compat.getLayoutParams()).width=0;((LinearLayout.LayoutParams)compat.getLayoutParams()).weight=1;
         content.addView(dpiRow,new LinearLayout.LayoutParams(-1,-2));
-        Runnable compatSync=()->compat.setEnabled(idle&&keepDpi.isChecked());
+        // Compat scaling only takes effect when the next session starts, so a running display does not lock it.
+        Runnable compatSync=()->compat.setEnabled(keepDpi.isChecked());
         keepDpi.setOnCheckedChangeListener((b,c)->compatSync.run());
         bitrate.setOnCheckedChangeListener((b,checked)->bitrateBlock.setVisibility(checked?View.VISIBLE:View.GONE));
         fps.setOnCheckedChangeListener((b,checked)->fpsBlock.setVisibility(checked?View.VISIBLE:View.GONE));
@@ -89,7 +91,11 @@ public final class EncoderOverrideDialog {
                 else{frameWidth=number(widthField);frameHeight=number(heightField);}
             }
             frames.saveEncoderOverride(new EncoderOverride(bitrate.isChecked()?bitrateBar.getProgress()*STEP:0,fps.isChecked()?fpsBar.getProgress():0,preview.isChecked(),frameWidth,frameHeight));
-            if(!idle){dialog.dismiss();return;}
+            if(!idle){
+                boolean wanted=compat.isChecked()&&keepDpi.isChecked();
+                if(wanted!=cached.compatScale)frames.saveCompatScale(wanted,error->{if(error!=null)ErrorDialog.show(activity,reference,"保存失败",error);});
+                dialog.dismiss();return;
+            }
             DisplaySettings base=frames.cachedSettings();boolean over=virtual.isChecked();
             DisplaySettings next;
             try{
