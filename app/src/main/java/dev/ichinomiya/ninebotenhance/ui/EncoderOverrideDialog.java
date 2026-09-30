@@ -14,7 +14,7 @@ import dev.ichinomiya.ninebotenhance.core.SidebarLayout;
 
 /**
  * Overrides: preview statistics, encoder bitrate and frame rate, the composed frame size, the virtual display size and density
- * (shape defaults apply while unchecked), the two background colours, keep-DPI and compat scaling. Labels only, no explanatory copy.
+ * (shape defaults apply while unchecked), the two background colours and keep-DPI. Labels only, no explanatory copy.
  * The display part is saved with the display settings and needs an idle session; the encoder part applies at once.
  */
 public final class EncoderOverrideDialog {
@@ -63,18 +63,13 @@ public final class EncoderOverrideDialog {
         content.addView(colours,new LinearLayout.LayoutParams(-1,-2));
         LinearLayout dpiRow=new LinearLayout(activity);dpiRow.setGravity(Gravity.CENTER_VERTICAL);
         CheckBox keepDpi=check(activity,theme,dpiRow,"保持 DPI",cached.keepPhoneDpi);
-        CheckBox compat=check(activity,theme,dpiRow,"兼容缩放",cached.compatScale);
         ((LinearLayout.LayoutParams)keepDpi.getLayoutParams()).width=0;((LinearLayout.LayoutParams)keepDpi.getLayoutParams()).weight=1;
-        ((LinearLayout.LayoutParams)compat.getLayoutParams()).width=0;((LinearLayout.LayoutParams)compat.getLayoutParams()).weight=1;
         content.addView(dpiRow,new LinearLayout.LayoutParams(-1,-2));
-        Runnable compatSync=()->compat.setEnabled(idle&&keepDpi.isChecked());
-        keepDpi.setOnCheckedChangeListener((b,c)->compatSync.run());
         bitrate.setOnCheckedChangeListener((b,checked)->bitrateBlock.setVisibility(checked?View.VISIBLE:View.GONE));
         fps.setOnCheckedChangeListener((b,checked)->fpsBlock.setVisibility(checked?View.VISIBLE:View.GONE));
         frame.setOnCheckedChangeListener((b,checked)->frameBlock.setVisibility(checked?View.VISIBLE:View.GONE));
         virtual.setOnCheckedChangeListener((b,checked)->virtualBlock.setVisibility(checked?View.VISIBLE:View.GONE));
         for(View v:new View[]{virtual,virtualWidth,virtualHeight,dpi,dark,light,keepDpi})v.setEnabled(idle);
-        compatSync.run();
         ScrollView scroll=new ScrollView(activity);scroll.addView(content);
         TextView title=new TextView(activity);title.setText("设置覆盖");title.setTextSize(20);title.setTextColor(theme.text);title.setPadding(pad,pad,pad,pad/2);
         AlertDialog dialog=new AlertDialog.Builder(activity).setCustomTitle(title).setView(scroll).setNegativeButton("关闭",null).setPositiveButton("保存",null).create();
@@ -94,7 +89,7 @@ public final class EncoderOverrideDialog {
             DisplaySettings next;
             try{
                 next=new DisplaySettings(base.width,base.height,over?number(virtualWidth):base.virtualWidth,over?number(virtualHeight):base.virtualHeight,over?number(dpi):base.dpi,
-                        dark.color(),keepDpi.isChecked(),light.color(),over,0,compat.isChecked()&&keepDpi.isChecked());
+                        dark.color(),keepDpi.isChecked(),light.color(),over,0);
             }catch(IllegalArgumentException e){ErrorDialog.show(activity,reference,e.getMessage());return;}
             frames.saveSettings(next,frames.cachedApp(),error->{if(error!=null)ErrorDialog.show(activity,reference,"保存失败",error);});
             dialog.dismiss();

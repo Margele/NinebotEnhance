@@ -61,7 +61,6 @@ public final class DirectCastController implements Application.ActivityLifecycle
         injector = new VehicleCardInjector(this, frames);
         frames.setDynamicPageListener(injector::refresh);
         frames.setInputDeniedListener(this::inputDenied);
-        frames.setRenderFallbackListener(this::renderFallback);
     }
     public void attach(Application application) { if (applications.add(application)) application.registerActivityLifecycleCallbacks(this); }
     public void inflated(int id, View view) {
@@ -342,7 +341,6 @@ public final class DirectCastController implements Application.ActivityLifecycle
     @Override public void onActivityResumed(Activity activity) {
         foreground = new WeakReference<>(activity); main.removeCallbacks(scan); main.post(scan);
         if (pendingInputDenial != null) promptInputDenial(activity);
-        if (pendingCompatScale) promptCompatScale(activity);
         if (compatible.getAsBoolean() && !CRUISE.equals(activity.getClass().getName())) scheduleUpdateCheck();
         if (panel != null && panel.owns(activity)) panel.resume();
         if (recordingPanel != null && recordingPanel.owns(activity)) recordingPanel.resume();
@@ -451,24 +449,6 @@ public final class DirectCastController implements Application.ActivityLifecycle
                     if (attempt < 6 && message.contains("请先结束投屏")) main.postDelayed(() -> keepRootAttempt(activity, attempt + 1), 500);
                     else error(activity, "无法开启不降权", message);
                 });
-    }
-    // ---------------------------------------------------------------- keep-DPI forced size refused
-    private boolean compatScalePrompted, pendingCompatScale;
-    private void renderFallback() {
-        if (compatScalePrompted) return;
-        Activity activity = foreground.get();
-        if (usable(activity)) promptCompatScale(activity); else pendingCompatScale = true;
-    }
-    /** The daemon could not force the logical size: this session runs at the buffer size, and the user decides about compat scaling for the next. */
-    private void promptCompatScale(Activity activity) {
-        if (compatScalePrompted || !usable(activity)) return;
-        compatScalePrompted = true; pendingCompatScale = false; frames.report("RENDER fallback prompt");
-        MirrorUi theme = new MirrorUi(activity, reference(activity, null));
-        TextView body = DialogContent.text(activity, theme, "系统拒绝了保持 DPI 的强制尺寸，本次投屏按缓冲区尺寸继续。从下次投屏起启用「兼容缩放」？", 14);
-        DialogContent.show(activity, theme, DialogContent.create(activity, theme, "兼容缩放", body, "启用", () -> frames.saveCompatScale(true, failure -> {
-            if (!usable(activity)) return;
-            if (failure == null) toast(activity, "已启用兼容缩放，下次投屏生效"); else error(activity, "无法启用兼容缩放", failure);
-        })));
     }
     private void openDeveloperOptions(Activity activity) {
         try { activity.startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); }
