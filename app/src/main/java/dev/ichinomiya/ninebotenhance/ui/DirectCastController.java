@@ -528,11 +528,23 @@ public final class DirectCastController implements Application.ActivityLifecycle
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(theme.accent);
     }
     // ---------------------------------------------------------------- settings
+    private void promptStop(Activity activity, View anchor) {
+        boolean virtual = frames.cachedSource().virtual();
+        MirrorUi theme = new MirrorUi(activity, reference(activity, anchor));
+        TextView body = DialogContent.text(activity, theme, (virtual ? "虚拟显示器" : "投屏") + "正在运行，停止后才能更改设置。要强制停止吗？", 14);
+        DialogContent.show(activity, theme, DialogContent.create(activity, theme, "设置", body, "强制停止", () -> {
+            String display = session.displayRequest();
+            if (display != null) endDisplay(display, virtual && !session.casting() ? "虚拟显示器已停止" : "投屏已停止");
+            if (usable(activity) && !session.displayRunning()) settings(activity, anchor);
+        }));
+    }
     public void settings(Activity activity, View anchor) {
         if (!usable(activity)) return;
         View card = reference(activity, anchor);
         if (!frames.noticeAccepted()) { OpenSourceNoticeDialog.show(activity, card, frames, () -> settings(activity, anchor)); return; }
         if (permissionCheck.active()) cancelPermissionCheck();
+        // A running picture locks the settings: the user stops it here or leaves them closed.
+        if (session.displayRunning()) { promptStop(activity, anchor); return; }
         autostartPrompt(activity);
         DisplaySettings cached = frames.cachedSettings();
         MirrorUi theme = new MirrorUi(activity, card);
@@ -797,7 +809,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
         return anchor != null ? anchor : activity.findViewById(android.R.id.content);
     }
     /** Session ends that are not failures stay a toast; everything else is an error the user can read and copy. */
-    private static final Set<String> PLAIN_ENDS = Set.of("投屏已停止", "巡航页面已退出", "车辆页面已退出", "九号出行已退出");
+    private static final Set<String> PLAIN_ENDS = Set.of("投屏已停止", "虚拟显示器已停止", "巡航页面已退出", "车辆页面已退出", "九号出行已退出");
     private void notify(String message) {
         if (message == null || PLAIN_ENDS.contains(message) || message.startsWith("巡航投屏已结束")) toast(message); else error(message);
     }
