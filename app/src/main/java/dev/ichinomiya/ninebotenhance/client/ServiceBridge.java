@@ -71,6 +71,8 @@ public final class ServiceBridge {
     }
     /** Why a bind may be refused, most likely cause first: the module hidden from Ninebot, then the ROM's autostart gate. */
     public String advice() {
+        // Inside a patched Ninebot the service is in the same package: no autostart gate, nothing to hide.
+        if (dev.ichinomiya.ninebotenhance.ipc.Flavor.EMBEDDED) return "";
         boolean visible = moduleVisible();
         StringBuilder text = new StringBuilder();
         if (!visible) text.append(HIDDEN_DETECTED);
@@ -78,7 +80,7 @@ public final class ServiceBridge {
         if (visible) { if (text.length() > 0) text.append('\n'); text.append(HIDDEN_HINT); }
         return text.toString();
     }
-    private String refused(String base) { return base + "\n" + advice(); }
+    private String refused(String base) { String advice = advice(); return advice.isEmpty() ? base : base + "\n" + advice; }
     public void attach(Context context) {
         main.post(() -> { if (this.context != null) return; this.context = context; rotate(); main.postDelayed(health, 1000); });
     }

@@ -773,7 +773,8 @@ public final class DirectCastController implements Application.ActivityLifecycle
     private static boolean autostartPrompted;
     /** Once per process: the system refused to bind the module service; say what usually causes that on this phone. */
     private void autostartPrompt(Activity activity) {
-        if (autostartPrompted || frames.serviceConnected() || !frames.serviceBindRefused() || !usable(activity)) return;
+        // A patched Ninebot binds a service of its own package; a refused bind there is a process being restarted, not a ROM gate.
+        if (dev.ichinomiya.ninebotenhance.ipc.Flavor.EMBEDDED || autostartPrompted || frames.serviceConnected() || !frames.serviceBindRefused() || !usable(activity)) return;
         autostartPrompted = true;
         AlertDialog.Builder builder = new AlertDialog.Builder(activity).setTitle("模块服务未连接").setMessage(frames.serviceAdvice()).setNegativeButton("关闭", null);
         if (ServiceBridge.hyperOs()) builder.setPositiveButton("打开设置", (d, w) -> openAutostart(activity));
