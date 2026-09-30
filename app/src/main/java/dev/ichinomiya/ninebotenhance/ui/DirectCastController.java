@@ -639,7 +639,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
         footer.about.setOnClickListener(v -> AboutDialog.show(activity, card, frames));
         footer.close.setOnClickListener(v -> dialog.dismiss());
         Button save = footer.save; save.setEnabled(false);
-        boolean[] loaded = {false};DisplaySettings[] loadedValue={null};
+        boolean[] loaded = {false};
         Runnable showMode = () -> {
             // Cards and the touch panel belong to the virtual display; the drawn picture has its own page; the capture has neither.
             PictureSource source = frames.cachedSource();
@@ -656,7 +656,7 @@ public final class DirectCastController implements Application.ActivityLifecycle
             connection.setText("正在读取已保存参数；当前显示缓存或未保存的输入。");
             frames.getSettings(config -> {
                 if (!usable(activity) || !dialog.isShowing()) return;
-                DisplaySettings value = Ipc.settings(config);loadedValue[0]=value;
+                DisplaySettings value = Ipc.settings(config);
                 boolean edited = !w.equals(width.getText().toString()) || !h.equals(height.getText().toString()) || !d.equals(dpi.getText().toString())
                         ||!vw.equals(virtualWidth.getText().toString())||!vh.equals(virtualHeight.getText().toString())||color!=topColor.color()||light!=lightColor.color()||keep!=keepDpi.isChecked();
                 if (!edited) { width.setText(String.valueOf(value.width)); height.setText(String.valueOf(value.height)); dpi.setText(String.valueOf(value.dpi));
@@ -713,8 +713,9 @@ public final class DirectCastController implements Application.ActivityLifecycle
             if (index <= 0 || index >= apps.size()) { toast(activity, "请先选择启动应用"); return; }
             String selected = apps.get(index).getString("component");
             try {
-                // Display parameters are edited in the override dialog; this save keeps the stored ones inside the current frame.
-                DisplaySettings next = (loadedValue[0] == null ? cached : loadedValue[0]).withFrame(frames.frameWidth(), frames.frameHeight());
+                // Display parameters are edited in the override dialog; this save keeps the stored ones inside the current frame. The
+                // cache, not what this dialog read when it opened: the override dialog may have saved since.
+                DisplaySettings next = frames.cachedSettings().withFrame(frames.frameWidth(), frames.frameHeight());
                 save.setEnabled(false); appPicker.setEnabled(false);
                 width.setEnabled(false);height.setEnabled(false);dpi.setEnabled(false);virtualWidth.setEnabled(false);virtualHeight.setEnabled(false);topColor.setEnabled(false);lightColor.setEnabled(false);keepDpi.setEnabled(false);connection.setText("正在保存…");
                 frames.saveSettings(next, selected, error -> {
