@@ -74,7 +74,7 @@ public final class CoreTests {
         rejects(()->new DisplaySettings(848,480,640,150,160,0xff242424),"tiny virtual height rejected");
         check(new DisplaySettings(240,320,240,320,160,0xff242424).virtualHeight==320,"a 240 x 320 half-screen frame is accepted");
         DisplaySettings keep=new DisplaySettings(848,480,640,440,160,0xff242424,true),off=new DisplaySettings(848,480,640,440,160,0xff242424,false);
-        check(d.keepPhoneDpi&&DisplaySettings.DEFAULT_KEEP_PHONE_DPI,"keep-phone-DPI is on by default");
+        check(!d.keepPhoneDpi&&!DisplaySettings.DEFAULT_KEEP_PHONE_DPI,"keep-phone-DPI is off by default");
         DisplaySettings.RenderPlan plan=keep.renderPlan(520);
         check(plan!=null&&plan.width()==2080&&plan.height()==1430&&plan.dpi()==520,"keep-phone-DPI renders 640x440 dp at 2080x1430@520 for a 520 dpi phone");
         DisplaySettings.RenderPlan odd=keep.renderPlan(420);
@@ -83,9 +83,7 @@ public final class CoreTests {
         check(capped.width()==4096&&capped.height()==2816&&capped.dpi()==700,"oversize plans shrink to the 4096 side limit keeping the phone density");
         check(keep.renderPlan(160)==null&&keep.renderPlan(0)==null&&off.renderPlan(520)==null,"no override when the density already matches, is unknown or the option is off");
         check(keep.withFrame(636,360).keepPhoneDpi&&!off.withFrame(636,360).keepPhoneDpi&&keep.label().contains("保持手机 DPI")&&!off.label().contains("保持"),"the option survives reframing and shows in the label");
-        DisplaySettings compat=keep.withCompatScale(true);
-        check(!keep.compatScale&&compat.compatScale&&keep.withCompatScale(false)==keep&&compat.withFrame(636,360).compatScale&&compat.label().contains("兼容缩放")&&!keep.label().contains("兼容"),"compat scaling is off by default, survives reframing and shows in the label");
-        check(DisplaySettings.read((k,f)->k.equals("layout_version")?DisplaySettings.LAYOUT_VERSION:k.equals("compat_scale")?1:f).compatScale&&!DisplaySettings.read((k,f)->k.equals("layout_version")?DisplaySettings.LAYOUT_VERSION:f).compatScale,"compat scaling round-trips through the settings store");
+        check(DisplaySettings.read((k,f)->k.equals("layout_version")?DisplaySettings.LAYOUT_VERSION:k.equals("keep_phone_dpi")?1:f).keepPhoneDpi&&!DisplaySettings.read((k,f)->k.equals("layout_version")?DisplaySettings.LAYOUT_VERSION:f).keepPhoneDpi,"keep-phone-DPI round-trips through the settings store and is off when nothing is stored");
         check(d.lightBackgroundColor==DisplaySettings.DEFAULT_LIGHT_BACKGROUND_COLOR&&d.background(true)==d.backgroundColor&&d.background(false)==d.lightBackgroundColor&&keep.withFrame(636,360).lightBackgroundColor==d.lightBackgroundColor,"each dashboard theme has its own frame background");
         rejects(()->new DisplaySettings(848,480,640,440,160,0xff242424,true,0x80ffffff),"transparent light background rejected");
         dev.ichinomiya.ninebotenhance.core.HudPalette dark=dev.ichinomiya.ninebotenhance.core.HudPalette.DARK,light=dev.ichinomiya.ninebotenhance.core.HudPalette.LIGHT;

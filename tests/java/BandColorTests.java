@@ -20,7 +20,7 @@ public final class BandColorTests {
         CoreTests.check(saved.width==900&&saved.height==500&&saved.virtualWidth==700&&saved.virtualHeight==400&&saved.backgroundColor==0xff12a0e3,"new settings preserve explicit independent dimensions and ignore legacy inset");
         CoreTests.check(saved.label().contains("700 × 400")&&saved.label().contains("#12A0E3"),"diagnostics report both dimensions and background");
         DisplaySettings kept=DisplaySettings.read(Map.of("layout_version",2,"keep_phone_dpi",1)::getOrDefault),off=DisplaySettings.read(Map.of("layout_version",2,"keep_phone_dpi",0)::getOrDefault);
-        CoreTests.check(kept.keepPhoneDpi&&!off.keepPhoneDpi&&saved.keepPhoneDpi&&legacy.keepPhoneDpi,"keep-phone-DPI reads as an int flag and is on when unsaved");
+        CoreTests.check(kept.keepPhoneDpi&&!off.keepPhoneDpi&&!saved.keepPhoneDpi&&!legacy.keepPhoneDpi,"keep-phone-DPI reads as an int flag and is off when unsaved");
         DisplaySettings lit=DisplaySettings.read(Map.of("layout_version",2,"light_background_color",0xfff0f0f0)::getOrDefault);
         CoreTests.check(lit.lightBackgroundColor==0xfff0f0f0&&saved.lightBackgroundColor==DisplaySettings.DEFAULT_LIGHT_BACKGROUND_COLOR&&lit.label().contains("#F0F0F0"),"the light background reads with a default and shows in the label");
         ByteBuffer app=ByteBuffer.allocate(d.virtualWidth*d.virtualHeight*4);app.putInt(app.capacity()-4,0x102030ff);

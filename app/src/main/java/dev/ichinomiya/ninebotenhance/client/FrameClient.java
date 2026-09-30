@@ -366,13 +366,9 @@ public final class FrameClient {
     /** The module relayed the daemon's injection refusal; each distinct message is handed to the host UI once, on the main thread. */
     private volatile java.util.function.Consumer<String> inputDeniedListener=error->{};
     private String inputDeniedNotified="";
-    private boolean renderFallbackNoted;
     public DynamicViewFactory dynamicViewFactory(){return dynamicViewFactory;}
     public void setDynamicPageListener(Runnable listener){dynamicPageListener=listener==null?()->{}:listener;}
     public void setInputDeniedListener(java.util.function.Consumer<String> listener){inputDeniedListener=listener==null?error->{}:listener;}
-    private volatile Runnable renderFallbackListener=()->{};
-    /** The daemon was refused the forced logical size: the host asks whether keep-DPI should switch to compat scaling next time. */
-    public void setRenderFallbackListener(Runnable listener){renderFallbackListener=listener==null?()->{}:listener;}
     public void dynamicViewFactory(DynamicViewFactory value){
         DynamicViewFactory previous=dynamicViewFactory;dynamicViewFactory=value;
         if(previous==null||previous.deviceId()!=value.deviceId()||!previous.deviceTag().equals(value.deviceTag())){report("FEATURE page factory deviceId="+value.deviceId());main.post(dynamicPageListener);}
@@ -490,11 +486,11 @@ public final class FrameClient {
                     loadDashboardLayout(battery.selectedKey());
                     settings = value.withFrame(frameWidth(), frameHeight()); cacheSettings(value, selected); closeFrames();
                     if (settings != value) report("LAYOUT frame " + settings.width + "x" + settings.height + " from the cast configuration");
-                    renderPlan = null; renderFallbackNoted = false;
+                    renderPlan = null;
                     int width = settings.virtualWidth, height = settings.virtualHeight;
-                    if (!screenCapture && settings.keepPhoneDpi && settings.compatScale) {
-                        // Keep-DPI, compat scaling: the display is created at the phone's density and the plan's logical size and the
-                        // capture path scales it back. Without it the daemon forces the logical size on the buffer-sized display instead.
+                    if (!screenCapture && settings.keepPhoneDpi) {
+                        // Keep-DPI: the display is created at the phone's density and the plan's logical size and the capture path
+                        // scales it back.
                         DisplaySettings.RenderPlan plan = settings.renderPlan(phoneDensityDpi());
                         if (plan != null) { renderPlan = plan; width = plan.width(); height = plan.height(); report("RENDER plan " + width + "x" + height + "@" + plan.dpi() + " scaled into " + settings.virtualWidth + "x" + settings.virtualHeight); }
                     }
@@ -568,8 +564,7 @@ public final class FrameClient {
             Bitmap bitmap;
             if (renderPlan != null && !screenCapture) bitmap = composeScaled(plane, width, height, frameWidth, frameHeight);
             else {
-                // Edge healing only on the forced-size path: SurfaceFlinger's scaled projection leaves the outermost ring partly covered.
-                PixelPacking.compose(plane.getBuffer(),plane.getRowStride(),plane.getPixelStride(),width,height,packed,frameWidth,frameHeight,frameHeight-settings.bottomInset-height,settings.background(dashboardDark),!screenCapture&&settings.keepPhoneDpi&&!renderFallbackNoted);
+                PixelPacking.compose(plane.getBuffer(),plane.getRowStride(),plane.getPixelStride(),width,height,packed,frameWidth,frameHeight,frameHeight-settings.bottomInset-height,settings.background(dashboardDark),false);
                 bitmap = Bitmap.createBitmap(frameWidth,frameHeight,Bitmap.Config.ARGB_8888); bitmap.copyPixelsFromBuffer(packed);
             }
             bitmap.setDensity(Bitmap.DENSITY_NONE);
@@ -746,7 +741,6 @@ public final class FrameClient {
             touchBound = status.getBoolean("touch_bound"); touchPresent = status.getBoolean("touch_present");
             String denied = status.getString("input_denied", "");
             if (!denied.isEmpty() && !denied.equals(inputDeniedNotified)) { inputDeniedNotified = denied; report("INPUT denied: " + denied); main.post(() -> inputDeniedListener.accept(denied)); }
-            if (status.getBoolean("render_fallback") && !renderFallbackNoted) { renderFallbackNoted = true; report("RENDER fallback: the forced logical size was refused; asking about compat scaling"); main.post(() -> renderFallbackListener.run()); }
         } else {
             active = displayReady = false; state = "模块服务已重启或会话已失效，请重新开始投屏";
             appRecovery = AppRecoveryState.HIDDEN; appRecoveryDetail = ""; touchBound = touchPresent = false;
@@ -1095,7 +1089,7 @@ public final class FrameClient {
             if (context != null) context.getSharedPreferences("dev.ichinomiya.ninebotenhance.cached_display", Context.MODE_PRIVATE).edit()
                     .putInt("width",value.width).putInt("height",value.height).putInt("dpi",value.dpi)
                     .putInt("layout_version",DisplaySettings.LAYOUT_VERSION).putInt("virtual_width",value.virtualWidth).putInt("virtual_height",value.virtualHeight)
-                    .putInt("background_color",value.backgroundColor).putInt("keep_phone_dpi",value.keepPhoneDpi?1:0).putInt("compat_scale",value.compatScale?1:0).putInt("virtual_override",value.virtualOverride?1:0).putInt("light_background_color",value.lightBackgroundColor).putInt("bottom_inset",value.bottomInset).remove("top_inset").remove("top_color")
+                    .putInt("background_color",value.backgroundColor).putInt("keep_phone_dpi",value.keepPhoneDpi?1:0).putInt("virtual_override",value.virtualOverride?1:0).putInt("light_background_color",value.lightBackgroundColor).putInt("bottom_inset",value.bottomInset).remove("top_inset").remove("top_color")
                     .putString(AppCatalog.SELECTED, selected).apply();
         } catch (RuntimeException e) { report("SETTINGS cache write " + Ipc.error(e)); }
     }
@@ -1147,14 +1141,6 @@ public final class FrameClient {
         metadataCall(Protocol.PRIVILEGE, args, result -> {
             try { cachePrivilege(result); done.accept(result); } catch (RuntimeException e) { failed.accept(Ipc.error(e)); }
         }, failed);
-    }
-    /** The compat scaling switch alone; accepted while a session runs because it only applies to the next one. */
-    public void saveCompatScale(boolean value, Consumer<String> done) {
-        Bundle args = new Bundle(); args.putBoolean("save_compat_scale", true); args.putBoolean("compat_scale", value);
-        metadataCall(Protocol.SETTINGS, args, result -> {
-            try { cacheSettings(Ipc.settings(result), result.getString(AppCatalog.SELECTED, "")); done.accept(null); }
-            catch (RuntimeException e) { done.accept(Ipc.error(e)); }
-        }, done);
     }
     public void saveSettings(DisplaySettings value, String selected, Consumer<String> done) {
         Bundle args = new Bundle(); args.putBoolean("save", true); Ipc.settings(args, value);
